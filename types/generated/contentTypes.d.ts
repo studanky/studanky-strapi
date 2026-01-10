@@ -444,6 +444,7 @@ export interface ApiReportReport extends Struct.CollectionTypeSchema {
     createdAt: Schema.Attribute.DateTime;
     createdBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
       Schema.Attribute.Private;
+    device_id: Schema.Attribute.String & Schema.Attribute.Required;
     flow_strength: Schema.Attribute.Enumeration<
       ['very_weak', 'weak', 'moderate', 'strong', 'very_strong']
     > &

@@ -48,6 +48,10 @@
       "type": "datetime",
       "required": true
     },
+    "device_id": {
+      "type": "string",
+      "required": true
+    },
     "user_lat": {
       "type": "decimal",
       "required": false
