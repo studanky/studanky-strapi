@@ -102,6 +102,12 @@
       "type": "relation",
       "relation": "oneToMany",
       "target": "admin::user"
+    },
+    "reports": {
+      "type": "relation",
+      "relation": "oneToMany",
+      "target": "api::report.report",
+      "mappedBy": "spring"
     }
   }
 }

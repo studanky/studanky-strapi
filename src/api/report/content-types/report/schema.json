@@ -1,0 +1,65 @@
+{
+  "kind": "collectionType",
+  "collectionName": "reports",
+  "info": {
+    "singularName": "report",
+    "pluralName": "reports",
+    "displayName": "Report"
+  },
+  "options": {
+    "draftAndPublish": true
+  },
+  "pluginOptions": {},
+  "attributes": {
+    "is_flowing": {
+      "type": "boolean",
+      "required": true
+    },
+    "flow_strength": {
+      "type": "enumeration",
+      "required": true,
+      "enum": [
+        "very_weak",
+        "weak",
+        "moderate",
+        "strong",
+        "very_strong"
+      ]
+    },
+    "has_odor": {
+      "type": "boolean",
+      "required": true
+    },
+    "water_clarity": {
+      "type": "enumeration",
+      "required": true,
+      "enum": [
+        "crystal_clear",
+        "clear",
+        "slightly_turbid",
+        "turbid",
+        "heavily_turbid"
+      ]
+    },
+    "note": {
+      "type": "text"
+    },
+    "reported_at": {
+      "type": "datetime",
+      "required": true
+    },
+    "user_lat": {
+      "type": "decimal",
+      "required": false
+    },
+    "user_lng": {
+      "type": "decimal"
+    },
+    "spring": {
+      "type": "relation",
+      "relation": "manyToOne",
+      "target": "api::spring.spring",
+      "inversedBy": "reports"
+    }
+  }
+}

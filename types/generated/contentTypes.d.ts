@@ -430,6 +430,48 @@ export interface AdminUser extends Struct.CollectionTypeSchema {
   };
 }
 
+export interface ApiReportReport extends Struct.CollectionTypeSchema {
+  collectionName: 'reports';
+  info: {
+    displayName: 'Report';
+    pluralName: 'reports';
+    singularName: 'report';
+  };
+  options: {
+    draftAndPublish: true;
+  };
+  attributes: {
+    createdAt: Schema.Attribute.DateTime;
+    createdBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
+      Schema.Attribute.Private;
+    flow_strength: Schema.Attribute.Enumeration<
+      ['very_weak', 'weak', 'moderate', 'strong', 'very_strong']
+    > &
+      Schema.Attribute.Required;
+    has_odor: Schema.Attribute.Boolean & Schema.Attribute.Required;
+    is_flowing: Schema.Attribute.Boolean & Schema.Attribute.Required;
+    locale: Schema.Attribute.String & Schema.Attribute.Private;
+    localizations: Schema.Attribute.Relation<
+      'oneToMany',
+      'api::report.report'
+    > &
+      Schema.Attribute.Private;
+    note: Schema.Attribute.Text;
+    publishedAt: Schema.Attribute.DateTime;
+    reported_at: Schema.Attribute.DateTime & Schema.Attribute.Required;
+    spring: Schema.Attribute.Relation<'manyToOne', 'api::spring.spring'>;
+    updatedAt: Schema.Attribute.DateTime;
+    updatedBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
+      Schema.Attribute.Private;
+    user_lat: Schema.Attribute.Decimal;
+    user_lng: Schema.Attribute.Decimal;
+    water_clarity: Schema.Attribute.Enumeration<
+      ['crystal_clear', 'clear', 'slightly_turbid', 'turbid', 'heavily_turbid']
+    > &
+      Schema.Attribute.Required;
+  };
+}
+
 export interface ApiSpringSpring extends Struct.CollectionTypeSchema {
   collectionName: 'springs';
   info: {
@@ -502,6 +544,7 @@ export interface ApiSpringSpring extends Struct.CollectionTypeSchema {
           localized: false;
         };
       }>;
+    reports: Schema.Attribute.Relation<'oneToMany', 'api::report.report'>;
     status_updated_at: Schema.Attribute.DateTime &
       Schema.Attribute.Required &
       Schema.Attribute.SetPluginOptions<{
@@ -1025,6 +1068,7 @@ declare module '@strapi/strapi' {
       'admin::transfer-token': AdminTransferToken;
       'admin::transfer-token-permission': AdminTransferTokenPermission;
       'admin::user': AdminUser;
+      'api::report.report': ApiReportReport;
       'api::spring.spring': ApiSpringSpring;
       'plugin::content-releases.release': PluginContentReleasesRelease;
       'plugin::content-releases.release-action': PluginContentReleasesReleaseAction;
