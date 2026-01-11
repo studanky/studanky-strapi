@@ -6,7 +6,14 @@ This folder contains documentation for custom features and extensions implemente
 
 | Document | Description |
 |----------|-------------|
-| [Lifecycle Hooks](./lifecycle-hooks.md) | Custom lifecycle hooks for content types |
+| [Lifecycle Hooks](./lifecycle-hooks.md) | Custom lifecycle hooks for Spring and Report content types |
+
+### Lifecycle Hooks Summary
+
+| Content Type | Hook | Purpose |
+|-------------|------|---------|
+| Spring | `afterCreate` | QR code auto-generation with documentId |
+| Report | `afterCreate` | Status propagation to parent Spring |
 
 ## Adding New Documentation
 
