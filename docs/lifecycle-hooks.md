@@ -100,19 +100,30 @@ Field reports may be submitted with delays (e.g., offline sync scenarios). The s
 
 #### Draft & Publish Handling
 
-Strapi v5 maintains separate draft and published versions:
+Strapi v5 maintains separate draft and published versions. The hook handles them intelligently:
+
+| Spring State | Hook Behavior |
+|-------------|---------------|
+| Draft only (never published) | Update draft only |
+| Published (no pending changes) | Update published + draft |
+| Published + Modified draft | Update BOTH independently |
 
 ```
 ┌─────────────────────────────────────────────────────────┐
 │ Report Created                                          │
 ├─────────────────────────────────────────────────────────┤
-│ 1. Update Spring draft version (always)                 │
-│ 2. If Spring.publishedAt exists:                        │
-│    └── Also update + publish the Spring                 │
+│ 1. Fetch Spring draft (always exists)                   │
+│ 2. Fetch Spring published (may be null)                 │
+│ 3. If published is null → Update draft only             │
+│ 4. If published exists:                                 │
+│    a) Update published via db.query() (bypasses sync)   │
+│    b) Update draft via Document Service                 │
 └─────────────────────────────────────────────────────────┘
 ```
 
-This ensures both versions stay synchronized when status changes.
+> **Important:** The hook uses `strapi.db.query()` for published updates because `strapi.documents().update({ status: 'published' })` would sync ALL draft changes to published. The db.query approach updates only `current_status` and `status_updated_at` fields directly in the database.
+
+> **Note:** The hook NEVER publishes uncommitted draft changes. Managers can have edits in progress without risk of them being auto-published.
 
 #### Error Handling
 
@@ -125,8 +136,8 @@ This ensures both versions stay synchronized when status changes.
 Successful propagation:
 ```
 [info] Report <reportDocId>: Propagating status to Spring <springDocId>
+[info] Report <reportDocId>: Updated Spring <springDocId> published version to is_flowing (db.query)
 [info] Report <reportDocId>: Updated Spring <springDocId> draft to is_flowing
-[info] Report <reportDocId>: Also updated Spring <springDocId> published version
 ```
 
 Skipped (not newer):
