@@ -1,61 +1,45 @@
-# 🚀 Getting started with Strapi
+# Studánky Strapi
 
-Strapi comes with a full featured [Command Line Interface](https://docs.strapi.io/dev-docs/cli) (CLI) which lets you scaffold and manage your project in seconds.
+Backend API for the Studánky (Springs) community platform — a hiking app for discovering and reporting the status of natural springs.
 
-### `develop`
+Built with [Strapi v5](https://strapi.io) and TypeScript.
 
-Start your Strapi application with autoReload enabled. [Learn more](https://docs.strapi.io/dev-docs/cli#strapi-develop)
+## 🚀 Getting Started
 
-```
-npm run develop
-# or
-yarn develop
-```
+### Prerequisites
 
-### `start`
+- Node.js 18–22
+- npm 6+
 
-Start your Strapi application with autoReload disabled. [Learn more](https://docs.strapi.io/dev-docs/cli#strapi-start)
+### Development
 
-```
-npm run start
-# or
-yarn start
+```bash
+npm install
+npm run dev
 ```
 
-### `build`
+Admin panel: http://localhost:1337/admin
 
-Build your admin panel. [Learn more](https://docs.strapi.io/dev-docs/cli#strapi-build)
+### Production
 
-```
+```bash
 npm run build
-# or
-yarn build
+npm run start
 ```
+
+## 📖 Custom Documentation
+
+This project includes custom backend logic. See the [`docs/`](./docs/) folder for details:
+
+| Document | Description |
+|----------|-------------|
+| [Lifecycle Hooks](./docs/lifecycle-hooks.md) | Auto-generation of QR codes for Springs |
 
 ## ⚙️ Deployment
 
-Strapi gives you many possible deployment options for your project including [Strapi Cloud](https://cloud.strapi.io). Browse the [deployment section of the documentation](https://docs.strapi.io/dev-docs/deployment) to find the best solution for your use case.
+See the [Strapi deployment documentation](https://docs.strapi.io/dev-docs/deployment) for deployment options.
 
-```
-yarn strapi deploy
-```
+## 📚 Learn More
 
-## 📚 Learn more
-
-- [Resource center](https://strapi.io/resource-center) - Strapi resource center.
-- [Strapi documentation](https://docs.strapi.io) - Official Strapi documentation.
-- [Strapi tutorials](https://strapi.io/tutorials) - List of tutorials made by the core team and the community.
-- [Strapi blog](https://strapi.io/blog) - Official Strapi blog containing articles made by the Strapi team and the community.
-- [Changelog](https://strapi.io/changelog) - Find out about the Strapi product updates, new features and general improvements.
-
-Feel free to check out the [Strapi GitHub repository](https://github.com/strapi/strapi). Your feedback and contributions are welcome!
-
-## ✨ Community
-
-- [Discord](https://discord.strapi.io) - Come chat with the Strapi community including the core team.
-- [Forum](https://forum.strapi.io/) - Place to discuss, ask questions and find answers, show your Strapi project and get feedback or just talk with other Community members.
-- [Awesome Strapi](https://github.com/strapi/awesome-strapi) - A curated list of awesome things related to Strapi.
-
----
-
-<sub>🤫 Psst! [Strapi is hiring](https://strapi.io/careers).</sub>
+- [Strapi Documentation](https://docs.strapi.io)
+- [Strapi v5 Migration Guide](https://docs.strapi.io/dev-docs/migration)
