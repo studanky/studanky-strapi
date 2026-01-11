@@ -33,7 +33,8 @@ This project includes custom backend logic. See the [`docs/`](./docs/) folder fo
 
 | Document | Description |
 |----------|-------------|
-| [Lifecycle Hooks](./docs/lifecycle-hooks.md) | Auto-generation of QR codes for Springs |
+| [Admin Filtering](./docs/admin-filtering.md) | Manager-based access control for Springs in Admin Panel |
+| [Lifecycle Hooks](./docs/lifecycle-hooks.md) | Auto-generation of QR codes, status propagation |
 
 ## ⚙️ Deployment
 
