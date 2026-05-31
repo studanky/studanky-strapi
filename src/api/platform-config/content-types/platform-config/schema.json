@@ -1,0 +1,26 @@
+{
+  "kind": "singleType",
+  "collectionName": "platform_configs",
+  "info": {
+    "singularName": "platform-config",
+    "pluralName": "platform-configs",
+    "displayName": "Platform Config"
+  },
+  "options": {
+    "draftAndPublish": false
+  },
+  "pluginOptions": {},
+  "attributes": {
+    "freshness_threshold_days": {
+      "type": "integer",
+      "required": true,
+      "default": 14,
+      "min": 1
+    },
+    "flow_scale_ranges": {
+      "type": "component",
+      "component": "config.flow-range",
+      "repeatable": true
+    }
+  }
+}

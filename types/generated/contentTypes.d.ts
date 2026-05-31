@@ -468,6 +468,44 @@ export interface ApiOwnerOwner extends Struct.CollectionTypeSchema {
   };
 }
 
+export interface ApiPlatformConfigPlatformConfig
+  extends Struct.SingleTypeSchema {
+  collectionName: 'platform_configs';
+  info: {
+    displayName: 'Platform Config';
+    pluralName: 'platform-configs';
+    singularName: 'platform-config';
+  };
+  options: {
+    draftAndPublish: false;
+  };
+  attributes: {
+    createdAt: Schema.Attribute.DateTime;
+    createdBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
+      Schema.Attribute.Private;
+    flow_scale_ranges: Schema.Attribute.Component<'config.flow-range', true>;
+    freshness_threshold_days: Schema.Attribute.Integer &
+      Schema.Attribute.Required &
+      Schema.Attribute.SetMinMax<
+        {
+          min: 1;
+        },
+        number
+      > &
+      Schema.Attribute.DefaultTo<14>;
+    locale: Schema.Attribute.String & Schema.Attribute.Private;
+    localizations: Schema.Attribute.Relation<
+      'oneToMany',
+      'api::platform-config.platform-config'
+    > &
+      Schema.Attribute.Private;
+    publishedAt: Schema.Attribute.DateTime;
+    updatedAt: Schema.Attribute.DateTime;
+    updatedBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
+      Schema.Attribute.Private;
+  };
+}
+
 export interface ApiReportReport extends Struct.CollectionTypeSchema {
   collectionName: 'reports';
   info: {
@@ -1134,6 +1172,7 @@ declare module '@strapi/strapi' {
       'admin::transfer-token-permission': AdminTransferTokenPermission;
       'admin::user': AdminUser;
       'api::owner.owner': ApiOwnerOwner;
+      'api::platform-config.platform-config': ApiPlatformConfigPlatformConfig;
       'api::report.report': ApiReportReport;
       'api::spring.spring': ApiSpringSpring;
       'plugin::content-releases.release': PluginContentReleasesRelease;
