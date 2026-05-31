@@ -1,89 +1,71 @@
 # API Security
 
-This document describes the security mechanisms implemented for public API endpoints.
+## Current state (MVP)
 
-## Report API Authentication
+The MVP backend is **read-only ČHMÚ data** (spec §11): there is **no public write
+endpoint**. The public surface is:
 
-**Location:** `src/api/report/policies/is-authentic-report.ts`
+- `GET /api/springs/map` — public read ([Public API](./public-api.md))
+- `GET /api/springs/:documentId/reports` — public read (private fields never exposed)
+- `GET /api/springs/:documentId`, `GET /api/platform-config` — core reads (enable per Public RBAC)
+- `POST /api/springs/sync-chmu` — **authenticated** (admin API token), ops-only
 
-The `POST /api/reports` endpoint uses a multi-layered approach to deter bot spam without requiring user registration.
+Admin Panel access is scoped by the [manager middleware](./admin-filtering.md).
+Capture coordinates are private and additionally excluded from the history
+allowlist (GDPR, spec §9.2). There is **no report-submit endpoint and no HMAC
+policy in the MVP** — they were removed as premature; the design below is the
+plan for when submission ships in Phase 2.
 
-> **Trust posture (important).** The HMAC + timestamp layer is **best-effort
-> anti-bot only**, not a source of trust: the shared secret is embedded in the
-> client app (extractable), and the 5-minute replay window is incompatible with
-> an offline-first queue (sign at queue flush). Real trustworthiness comes from
-> the **GPS geofence (200 m)** + (Phase 3) trust score, verified/anonymous origin,
-> and false-report flagging — not from the signature. A server-side QR signature
-> (`HMAC(documentId, SERVER_SECRET)`, secret **only on the server**) is a separate
-> concern and must never ship the secret to the app. See [roadmap](./roadmap.md).
+### MVP hardening checklist (ops)
 
-### Security Layers
+- **Verify Public role RBAC**: enable only `spring.find`/`findOne` and
+  `platform-config.find`. Do **not** enable any `report.*` action.
+- **CORS**: restrict `config/middlewares.ts` `strapi::cors` `origin` to the app's
+  domains in production (default is permissive).
+- **`sync-chmu`**: keep authenticated (admin API token only); consider a
+  concurrency guard so two triggers can't overlap.
+- A general **rate limit** on the public read API is reasonable at the edge
+  (CDN / reverse proxy), matching the planned `spring.map` cache.
 
-| Layer | Header | Purpose |
-|-------|--------|---------|
-| HMAC Signature | `X-App-Signature` | Proves request originates from legitimate app |
-| Timestamp | `X-Timestamp` | Prevents replay attacks (5-minute window) |
-| Geo-Fence | Request body | Validates user proximity to spring (≤200m) |
+## Report submit security — Phase 2 (planned, NOT implemented)
 
-### Signature Construction
+When community submission ships (`POST /api/reports` via `report.submit`), apply
+these — layered, with effort spent where it actually buys assurance.
 
-**Payload format:** `{timestamp}:{springDocumentId}`
+### Trust posture
 
-```
-HMAC-SHA256("{timestamp}:{springDocumentId}", HMAC_SECRET) → hex string
-```
+The `X-App-Signature` / `X-Timestamp` HMAC layer is **best-effort anti-bot only**,
+not a source of trust: the shared secret is embedded in the client app
+(extractable), and a fixed replay window is incompatible with an offline-first
+queue. Real trustworthiness comes from:
 
-**Example:**
-```
-Timestamp: 1736622000
-Spring ID: abc123xyz456
-Payload:   "1736622000:abc123xyz456"
-```
+1. **Rate limiting** on `POST /reports` (per IP; stricter for anonymous) — the
+   single most important control for a public write endpoint. **Required before
+   the endpoint goes public.**
+2. **GPS geo-fence (≤200 m)** — Haversine distance between the reported GPS and
+   the spring (spec §8.1). Soft trust signal (client GPS is spoofable).
+3. **`client_report_id` UNIQUE idempotence** — the DB unique index already
+   exists; the submit service returns the existing report on a duplicate instead
+   of erroring (offline-queue retries).
+4. **Phase 3**: verified vs anonymous weighting, trust score, false-report flagging.
 
-### Configuration
+### HMAC (if kept) — keep it cheap, don't expand
 
-| Variable | Description |
-|----------|-------------|
-| `HMAC_SECRET` | Shared secret (min 32 chars), set in `.env` |
+- Payload `"{timestamp}:{springDocumentId}"`, HMAC-SHA256, compared with
+  `crypto.timingSafeEqual`; **fail closed** if `HMAC_SECRET` is unset.
+- **Sign at queue flush**, not at capture time, or offline reports expire.
+- A server-side **QR signature** (`HMAC(documentId, SERVER_SECRET)`, secret
+  **server-only**) is a separate concern from any client-embedded signature and
+  must never ship the secret to the app.
+- `HMAC_SECRET` env var is only needed once this layer is wired (Phase 2).
 
-### Geo-Fence Validation
+### Privacy
 
-Uses the Haversine formula (`src/utils/geo.ts`) to calculate great-circle distance between:
-- User's reported GPS coordinates (`user_lat`, `user_lng`)
-- Spring's stored coordinates (`lat`, `lng`)
+- Mark `device_id` **private** (client identifier) alongside `user_lat`/`user_lng`.
+- Keep `reporter` (→ users-permissions user) private when added.
 
-Distance limit: **200 meters** (`MAX_DISTANCE_METERS` in the policy; spec §8.1 / návrh §6)
-
-> **Note:** Geo-fence is bypassed if `user_lat`/`user_lng` are not provided.
-
-### Route Configuration
-
-**Location:** `src/api/report/routes/report.ts`
-
-Policy is applied only to the `POST /reports` route:
-
-```typescript
-{
-  method: "POST",
-  path: "/reports",
-  handler: "report.create",
-  config: {
-    policies: ["api::report.is-authentic-report"],
-  },
-}
-```
-
-### Error Responses
-
-All security failures return `403 Forbidden` with details logged server-side.
-
-| Failure | Log Message |
-|---------|-------------|
-| Missing signature | `Report rejected: Missing X-App-Signature header` |
-| Expired timestamp | `Report rejected: Timestamp expired or invalid` |
-| Invalid signature | `Report rejected: Invalid signature for spring ...` |
-| Too far from spring | `Report rejected: User location too far from spring` |
-
-### Mobile Integration
-
-See [Flutter Integration Guide](./flutter-integration.md) for client-side implementation details.
+> The reference implementation (HMAC policy + geofence util) lived on the
+> `feature/api-security` branch and is recoverable from git history; re-introduce
+> it wired to `report.submit` with rate limiting + idempotence in Phase 2. See
+> [roadmap](./roadmap.md) and the client contract in
+> [Flutter Integration](./flutter-integration.md).

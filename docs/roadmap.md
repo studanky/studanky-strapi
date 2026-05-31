@@ -11,7 +11,10 @@ endpoints, admin manager scoping. The items below are recommended follow-ups.
   distribution revealed by the first sync (návrh §10). See [denormalization](./denormalization.md#flow-scale).
 - **Grant Public-role permissions** for the read endpoints that should be open:
   `spring.findOne`, `platform-config.find` (the custom `map` / `reports` routes are
-  already `auth:false`). See [Public API](./public-api.md).
+  already `auth:false`). **Do NOT enable any `report.*` action** — reports are
+  read via spring history only. See [Public API](./public-api.md).
+- **Restrict CORS** `origin` (`config/middlewares.ts` → `strapi::cors`) to the
+  app's domains in production (default is permissive). See [API Security](./api-security.md).
 - **Create an admin API token** for `POST /api/springs/sync-chmu` if you want
   manual/ops runs in addition to the cron.
 - **Set `CRON_ENABLED`** appropriately per environment (default `true`).
@@ -20,11 +23,19 @@ endpoints, admin manager scoping. The items below are recommended follow-ups.
 
 ## Phase 2 — Report submit (offline-first)
 
+> The MVP has **no submit endpoint**. The earlier HMAC policy, `POST /reports`
+> routes and the geofence util were **removed from the codebase** as premature
+> (recoverable from git / the `feature/api-security` branch). Re-introduce them
+> wired to `report.submit` — **with rate limiting in place first**.
+
+- **Rate limiting on `POST /reports`** (per IP; stricter for anonymous) — the
+  prerequisite control before the endpoint is public. See [API Security](./api-security.md).
 - **`report.submit` service** (override `POST /api/reports`): idempotency via
   **`client_report_id`** (return the existing report instead of a 409 on the
   unique index — deferred item "C9"), QR HMAC resolve, l/s → scale conversion,
   then `refreshLatest`. The unique index already guarantees no duplicates at the
   DB level.
+- Mark **`device_id` private** when the submit path returns/stores it.
 - **Report fields** still to add (deferred): `source`, `measurement_method`,
   `received_at`, `trust_score`, `reporter` (relation → users-permissions user,
   **private**), `flagged_count`.

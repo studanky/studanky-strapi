@@ -1,5 +1,11 @@
 # Flutter Integration Guide: Report API Authentication
 
+> ⚠️ **Phase 2 — planned contract, not in the MVP.** `POST /api/reports` and its
+> HMAC policy are **not exposed in the current backend** (read-only ČHMÚ MVP).
+> This document is the client contract to implement when submission ships; the
+> server side must add rate limiting + `client_report_id` idempotence first
+> (see [API Security](./api-security.md) → Phase 2).
+
 This document explains how to authenticate requests to the `POST /api/reports` endpoint from a Flutter mobile application.
 
 ## Overview

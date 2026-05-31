@@ -28,7 +28,6 @@ tests/
   unit/
     flow-scale.test.ts
     concurrency.test.ts
-    geo.test.ts
     chmu-client.test.ts
     spring-scope.test.ts
 ```
@@ -42,8 +41,7 @@ Test files are named `*.test.ts` and live under `tests/`. The app `tsconfig.json
 |---|---|---|
 | `flow-scale.test.ts` | `pickFlowScale` ([src/utils/flow-scale.ts](../src/utils/flow-scale.ts)) | range boundaries, out-of-range, null/NaN, empty ranges |
 | `concurrency.test.ts` | `mapWithConcurrency` ([src/utils/concurrency.ts](../src/utils/concurrency.ts)) | order preserved, limit never exceeded, empty input |
-| `geo.test.ts` | `haversineDistance` ([src/utils/geo.ts](../src/utils/geo.ts)) | zero, ~111 km/°, doc example, symmetry |
-| `chmu-client.test.ts` | `parseStations` / `parseLatestValue` ([chmu-client.ts](../src/api/spring/services/chmu-client.ts)) | spring filter, positional mapping, bad-coord skip, YD/L_S by name (not order), newest by `dt`, empty → null |
+| `chmu-client.test.ts` | `parseStations` / `parseLatestValue` / `recentMonths` ([chmu-client.ts](../src/api/spring/services/chmu-client.ts)) | spring filter, positional mapping, bad-coord skip, YD/L_S by name (not order), newest by `dt`, empty → null, month rollover |
 | `spring-scope.test.ts` | `resolveSpringScope` ([spring-scope.ts](../src/middlewares/document/spring-scope.ts)) | super-admin bypass, admin scoping, wrong uid/action, internal calls, **users-permissions not scoped (invariant #2)**, missing `roles[]` |
 
 ## Design: testable pure logic

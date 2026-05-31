@@ -12,7 +12,10 @@ Built with [Strapi v5](https://strapi.io) and TypeScript.
 - **Public read API** — `/springs/map` (bbox) and `/springs/:documentId/reports`
 - **QR Codes** — Auto-generated for each spring (encode `documentId`)
 - **Manager Access Control** — admin users see only springs they manage
-- **Report anti-bot** — HMAC + 200 m geo-fence (best-effort; see API Security)
+
+> The MVP is read-only ČHMÚ data — there is no public write endpoint. Community
+> report submission (HMAC, geo-fence, rate limiting) is **Phase 2**; see
+> [API Security](./docs/api-security.md).
 
 ## 🚀 Getting Started
 
@@ -65,8 +68,8 @@ Custom backend logic is documented in [`docs/`](./docs/):
 | [Database & Migrations](./docs/database-migrations.md) | Indexes + why pairing is non-unique |
 | [Admin Filtering](./docs/admin-filtering.md) | Manager-based access control for Springs |
 | [Lifecycle Hooks](./docs/lifecycle-hooks.md) | QR code generation (denorm moved to a service) |
-| [API Security](./docs/api-security.md) | HMAC (best-effort), replay window, 200 m geo-fence |
-| [Flutter Integration](./docs/flutter-integration.md) | Mobile client integration guide |
+| [API Security](./docs/api-security.md) | MVP public surface + Phase 2 submit-security plan |
+| [Flutter Integration](./docs/flutter-integration.md) | Client submit contract (Phase 2, planned) |
 | [Roadmap](./docs/roadmap.md) | Next steps & Phase 2 / 3 plan |
 | [Testing](./docs/testing.md) | Running & writing the automated unit tests |
 | [Product spec](./docs/studanky-specifikace.md) · [Backend design](./docs/studanky-strapi-navrh.md) | Source-of-truth design docs |
@@ -83,8 +86,8 @@ Custom backend logic is documented in [`docs/`](./docs/):
 | `TRANSFER_TOKEN_SALT` | Salt for transfer tokens |
 | `JWT_SECRET` | Secret for user JWT tokens |
 | `ENCRYPTION_KEY` | Key for data encryption |
-| `HMAC_SECRET` | Shared secret for Report API authentication |
 | `CRON_ENABLED` | Enable scheduled tasks incl. ČHMÚ sync (default `true`) |
+| `HMAC_SECRET` | *(Phase 2)* shared secret for report-submit auth — unused in MVP |
 
 ## ⚙️ Deployment
 
