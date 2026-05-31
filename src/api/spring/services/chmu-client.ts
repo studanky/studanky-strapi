@@ -6,6 +6,9 @@
  * → canonical model happens in the spring service (`syncFromChmu`). This keeps
  * ČHMÚ specifics out of the core; future sources are just additional adapters.
  *
+ * Parsing is split into pure functions (`parseStations`, `parseLatestValue`) so
+ * it is unit-testable without network access.
+ *
  * Source docs: docs/chmu_groundwater_api_documentation.md (branch `now/`).
  */
 
@@ -61,8 +64,9 @@ async function fetchJson(
 /**
  * Parses a ČHMÚ `DataCollection` positionally. Rows are arrays whose order
  * matches the comma-separated `header`; never rely on named fields in a row.
+ * Accepts the `data` node (the `{ type, data: { header, values } }` wrapper).
  */
-function parseDataCollection(dc: unknown): {
+export function parseDataCollection(dc: unknown): {
   columns: string[];
   rows: unknown[][];
 } {
@@ -73,15 +77,12 @@ function parseDataCollection(dc: unknown): {
   return { columns, rows };
 }
 
-/**
- * Loads spring stations from `now/metadata/meta1.json`
- * (filtered to OBJECT_TYPE === 'spring').
- */
-export async function listSpringStations(): Promise<ChmuStation[]> {
-  const json = (await fetchJson(META1_URL)) as { data?: unknown } | null;
-  if (!json) return [];
+/** Maps a parsed meta1.json document → spring stations. Pure. */
+export function parseStations(meta1Json: unknown): ChmuStation[] {
+  const root = meta1Json as { data?: unknown } | null;
+  if (!root) return [];
 
-  const { columns, rows } = parseDataCollection(json.data);
+  const { columns, rows } = parseDataCollection(root.data);
   const col = (name: string) => columns.indexOf(name);
   const iId = col("objID");
   const iName = col("OBJECT_NAME");
@@ -112,14 +113,12 @@ export async function listSpringStations(): Promise<ChmuStation[]> {
 }
 
 /**
- * Latest discharge value for a station from `now/data/{objID}_D.json`.
- * Selects the YD / L_S series by name (not by array order) and returns the
- * newest tsData point. Returns null on 404 or empty/missing series.
+ * Maps a parsed `{objID}_D.json` document → latest YD/L_S value. Pure.
+ * Selects the series by name (not array order); returns the newest tsData point
+ * or null on empty/missing series.
  */
-export async function fetchLatestValue(
-  externalId: string
-): Promise<ChmuValue | null> {
-  const json = (await fetchJson(dataUrl(externalId))) as {
+export function parseLatestValue(dataJson: unknown): ChmuValue | null {
+  const json = dataJson as {
     objList?: Array<{
       tsList?: Array<{
         tsConID?: string;
@@ -147,4 +146,16 @@ export async function fetchLatestValue(
   if (!latest) return null;
 
   return { dt: latest.dt as string, valueLps: Number(latest.value) };
+}
+
+/** Loads spring stations from `now/metadata/meta1.json`. */
+export async function listSpringStations(): Promise<ChmuStation[]> {
+  return parseStations(await fetchJson(META1_URL));
+}
+
+/** Latest discharge value for a station from `now/data/{objID}_D.json`. */
+export async function fetchLatestValue(
+  externalId: string
+): Promise<ChmuValue | null> {
+  return parseLatestValue(await fetchJson(dataUrl(externalId)));
 }

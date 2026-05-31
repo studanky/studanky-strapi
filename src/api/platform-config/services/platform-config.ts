@@ -3,14 +3,9 @@
  */
 
 import { factories } from "@strapi/strapi";
+import { pickFlowScale, type FlowRange } from "../../../utils/flow-scale";
 
 const CONFIG_UID = "api::platform-config.platform-config";
-
-interface FlowRange {
-  scale: number;
-  min_lps: number;
-  max_lps: number;
-}
 
 export default factories.createCoreService(CONFIG_UID, ({ strapi }) => ({
   /**
@@ -32,12 +27,6 @@ export default factories.createCoreService(CONFIG_UID, ({ strapi }) => ({
       populate: { flow_scale_ranges: true },
     })) as { flow_scale_ranges?: FlowRange[] } | null;
 
-    const ranges = config?.flow_scale_ranges ?? [];
-    if (!ranges.length) {
-      return null;
-    }
-
-    const match = ranges.find((r) => lps >= r.min_lps && lps <= r.max_lps);
-    return match ? match.scale : null;
+    return pickFlowScale(config?.flow_scale_ranges, lps);
   },
 }));

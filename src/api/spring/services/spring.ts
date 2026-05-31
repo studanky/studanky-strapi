@@ -5,6 +5,7 @@
 import { factories } from "@strapi/strapi";
 import type { Core } from "@strapi/strapi";
 import { listSpringStations, fetchLatestValue } from "./chmu-client";
+import { mapWithConcurrency } from "../../../utils/concurrency";
 
 const SPRING_UID = "api::spring.spring";
 const REPORT_UID = "api::report.report";
@@ -37,28 +38,6 @@ async function getDefaultLocale(strapi: Core.Strapi): Promise<string> {
   } catch {
     return "en";
   }
-}
-
-/** Runs `fn` over `items` with bounded concurrency (preserves order). */
-async function mapWithConcurrency<T, R>(
-  items: T[],
-  limit: number,
-  fn: (item: T) => Promise<R>
-): Promise<R[]> {
-  const results: R[] = new Array(items.length);
-  let cursor = 0;
-  const workers = Array.from(
-    { length: Math.min(Math.max(1, limit), items.length || 1) },
-    async () => {
-      while (true) {
-        const idx = cursor++;
-        if (idx >= items.length) break;
-        results[idx] = await fn(items[idx]);
-      }
-    }
-  );
-  await Promise.all(workers);
-  return results;
 }
 
 export default factories.createCoreService(SPRING_UID, ({ strapi }) => ({

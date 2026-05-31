@@ -37,6 +37,15 @@ npm run dev
 
 Admin panel: http://localhost:1337/admin
 
+### Testing
+
+```bash
+npm test          # run unit tests once (Vitest)
+npm run test:watch # watch mode
+```
+
+See [Testing](./docs/testing.md) for coverage and how to add tests.
+
 ### Production
 
 ```bash
@@ -59,6 +68,7 @@ Custom backend logic is documented in [`docs/`](./docs/):
 | [API Security](./docs/api-security.md) | HMAC (best-effort), replay window, 200 m geo-fence |
 | [Flutter Integration](./docs/flutter-integration.md) | Mobile client integration guide |
 | [Roadmap](./docs/roadmap.md) | Next steps & Phase 2 / 3 plan |
+| [Testing](./docs/testing.md) | Running & writing the automated unit tests |
 | [Product spec](./docs/studanky-specifikace.md) · [Backend design](./docs/studanky-strapi-navrh.md) | Source-of-truth design docs |
 
 ## 🔐 Environment Variables
