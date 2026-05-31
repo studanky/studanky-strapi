@@ -461,7 +461,7 @@ export interface ApiOwnerOwner extends Struct.CollectionTypeSchema {
     name: Schema.Attribute.String & Schema.Attribute.Required;
     publishedAt: Schema.Attribute.DateTime;
     springs: Schema.Attribute.Relation<'oneToMany', 'api::spring.spring'>;
-    type: Schema.Attribute.Enumeration<['chmu']>;
+    type: Schema.Attribute.Enumeration<['chmu']> & Schema.Attribute.Required;
     updatedAt: Schema.Attribute.DateTime;
     updatedBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
       Schema.Attribute.Private;
@@ -648,7 +648,6 @@ export interface ApiSpringSpring extends Struct.CollectionTypeSchema {
       }>;
     reports: Schema.Attribute.Relation<'oneToMany', 'api::report.report'>;
     status_updated_at: Schema.Attribute.DateTime &
-      Schema.Attribute.Required &
       Schema.Attribute.SetPluginOptions<{
         i18n: {
           localized: false;

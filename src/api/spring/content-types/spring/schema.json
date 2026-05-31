@@ -64,7 +64,7 @@
           "localized": false
         }
       },
-      "required": true
+      "required": false
     },
     "photo": {
       "type": "media",

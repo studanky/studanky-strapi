@@ -17,6 +17,7 @@
     },
     "type": {
       "type": "enumeration",
+      "required": true,
       "enum": [
         "chmu"
       ]
