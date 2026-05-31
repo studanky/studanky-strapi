@@ -514,7 +514,7 @@ export interface ApiReportReport extends Struct.CollectionTypeSchema {
     singularName: 'report';
   };
   options: {
-    draftAndPublish: true;
+    draftAndPublish: false;
   };
   attributes: {
     createdAt: Schema.Attribute.DateTime;
