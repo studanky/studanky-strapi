@@ -108,6 +108,12 @@
       "relation": "oneToMany",
       "target": "api::report.report",
       "mappedBy": "spring"
+    },
+    "owner": {
+      "type": "relation",
+      "relation": "manyToOne",
+      "target": "api::owner.owner",
+      "inversedBy": "springs"
     }
   }
 }

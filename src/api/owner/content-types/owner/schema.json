@@ -23,6 +23,12 @@
     },
     "contact_email": {
       "type": "email"
+    },
+    "springs": {
+      "type": "relation",
+      "relation": "oneToMany",
+      "target": "api::spring.spring",
+      "mappedBy": "owner"
     }
   }
 }
