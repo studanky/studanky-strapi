@@ -3,9 +3,13 @@
  */
 
 import { factories } from "@strapi/strapi";
+import type { Core } from "@strapi/strapi";
+import { listSpringStations, fetchLatestValue } from "./chmu-client";
 
 const SPRING_UID = "api::spring.spring";
 const REPORT_UID = "api::report.report";
+const CONFIG_UID = "api::platform-config.platform-config";
+const CHMU_SOURCE = "chmu";
 
 type SpringStatus = "is_flowing" | "is_not_flowing" | "unknown";
 
@@ -20,6 +24,41 @@ interface SpringStatusFields {
   documentId: string;
   current_status: SpringStatus;
   status_updated_at: string | null;
+}
+
+/** Resolves the configured default locale dynamically (falls back to en). */
+async function getDefaultLocale(strapi: Core.Strapi): Promise<string> {
+  try {
+    const code = await strapi
+      .plugin("i18n")
+      .service("locales")
+      .getDefaultLocale();
+    return code || "en";
+  } catch {
+    return "en";
+  }
+}
+
+/** Runs `fn` over `items` with bounded concurrency (preserves order). */
+async function mapWithConcurrency<T, R>(
+  items: T[],
+  limit: number,
+  fn: (item: T) => Promise<R>
+): Promise<R[]> {
+  const results: R[] = new Array(items.length);
+  let cursor = 0;
+  const workers = Array.from(
+    { length: Math.min(Math.max(1, limit), items.length || 1) },
+    async () => {
+      while (true) {
+        const idx = cursor++;
+        if (idx >= items.length) break;
+        results[idx] = await fn(items[idx]);
+      }
+    }
+  );
+  await Promise.all(workers);
+  return results;
 }
 
 export default factories.createCoreService(SPRING_UID, ({ strapi }) => ({
@@ -114,7 +153,7 @@ export default factories.createCoreService(SPRING_UID, ({ strapi }) => ({
   /**
    * Map query — returns only the minimal PUBLIC fields needed to render markers
    * within a bounding box. No report history, no private data. Reads the
-   * published, default-locale (cs) rows so the hot map path stays cheap.
+   * published, default-locale rows so the hot map path stays cheap.
    *
    * @param bbox "minLng,minLat,maxLng,maxLat"
    */
@@ -127,6 +166,7 @@ export default factories.createCoreService(SPRING_UID, ({ strapi }) => ({
       return [];
     }
 
+    const locale = await getDefaultLocale(strapi);
     return strapi.documents(SPRING_UID).findMany({
       filters: {
         lat: { $gte: minLat, $lte: maxLat },
@@ -135,7 +175,7 @@ export default factories.createCoreService(SPRING_UID, ({ strapi }) => ({
       // Only map-safe fields (documentId is always included by the Document Service).
       fields: ["name", "lat", "lng", "current_status", "status_updated_at"],
       status: "published",
-      locale: "cs",
+      locale,
     });
   },
 
@@ -180,5 +220,146 @@ export default factories.createCoreService(SPRING_UID, ({ strapi }) => ({
         pageCount: Math.ceil(total / safePageSize),
       },
     };
+  },
+
+  /**
+   * ČHMÚ sync — upserts spring stations and appends a fresh discharge report
+   * when ČHMÚ has newer data, then denormalizes via refreshLatest.
+   *
+   * Source-neutral: the ČHMÚ adapter (`chmu-client`) yields neutral DTOs; this
+   * method maps them onto the canonical model (external_source = 'chmu'). Each
+   * station is isolated in try/catch so one bad object never aborts the run;
+   * value downloads are concurrency-limited (~hundreds of files / night).
+   */
+  async syncFromChmu() {
+    const locale = await getDefaultLocale(strapi);
+    const stations = await listSpringStations();
+
+    const stats = {
+      stations: stations.length,
+      created: 0,
+      updated: 0,
+      reports: 0,
+      skipped: 0,
+      errors: 0,
+    };
+
+    // Phase A — upsert station metadata (sequential; SQLite-friendly writes).
+    const targets: Array<{
+      documentId: string;
+      externalId: string;
+      lastReportAt: string | null;
+    }> = [];
+
+    for (const st of stations) {
+      try {
+        const existing = (await strapi.documents(SPRING_UID).findFirst({
+          filters: { external_source: CHMU_SOURCE, external_id: st.externalId },
+          status: "draft",
+          locale,
+          fields: ["status_updated_at"],
+        })) as { documentId: string; status_updated_at: string | null } | null;
+
+        if (!existing) {
+          const created = await strapi.documents(SPRING_UID).create({
+            data: {
+              name: st.name,
+              lat: st.lat,
+              lng: st.lng,
+              external_source: CHMU_SOURCE,
+              external_id: st.externalId,
+              current_status: "unknown",
+            },
+            locale,
+          });
+          await strapi
+            .documents(SPRING_UID)
+            .publish({ documentId: created.documentId, locale });
+          stats.created++;
+          targets.push({
+            documentId: created.documentId,
+            externalId: st.externalId,
+            lastReportAt: null,
+          });
+        } else {
+          await strapi.documents(SPRING_UID).update({
+            documentId: existing.documentId,
+            data: { name: st.name, lat: st.lat, lng: st.lng },
+            locale,
+          });
+          await strapi
+            .documents(SPRING_UID)
+            .publish({ documentId: existing.documentId, locale });
+          stats.updated++;
+          targets.push({
+            documentId: existing.documentId,
+            externalId: st.externalId,
+            lastReportAt: existing.status_updated_at ?? null,
+          });
+        }
+      } catch (err) {
+        stats.errors++;
+        strapi.log.error(
+          `chmuSync: upsert failed for ${st.externalId}: ${(err as Error).message}`
+        );
+      }
+    }
+
+    // Phase B — download latest values, concurrency-limited.
+    const fetched = await mapWithConcurrency(targets, 8, async (t) => {
+      try {
+        return { t, value: await fetchLatestValue(t.externalId) };
+      } catch (err) {
+        stats.errors++;
+        strapi.log.warn(
+          `chmuSync: value fetch failed for ${t.externalId}: ${(err as Error).message}`
+        );
+        return { t, value: null };
+      }
+    });
+
+    // Phase C — append a report only when ČHMÚ is strictly newer, then refresh.
+    for (const { t, value } of fetched) {
+      if (!value) {
+        stats.skipped++;
+        continue;
+      }
+      const isNewer =
+        !t.lastReportAt || new Date(value.dt) > new Date(t.lastReportAt);
+      if (!isNewer) {
+        stats.skipped++;
+        continue;
+      }
+
+      try {
+        const flowScale = await strapi
+          .service(CONFIG_UID)
+          .flowScaleFromLps(value.valueLps);
+
+        await strapi.documents(REPORT_UID).create({
+          // ČHMÚ sensor reports legitimately omit has_odor / water_clarity /
+          // device_id (now nullable) and client_report_id (idempotence here is
+          // handled by the `dt`-newer check above, not the offline-queue id).
+          data: {
+            spring: t.documentId,
+            is_flowing: value.valueLps > 0,
+            flow_rate_lps: value.valueLps,
+            flow_scale: flowScale,
+            reported_at: value.dt,
+          },
+        });
+
+        await strapi.service(SPRING_UID).refreshLatest(t.documentId);
+        stats.reports++;
+      } catch (err) {
+        stats.errors++;
+        strapi.log.error(
+          `chmuSync: report failed for ${t.externalId}: ${(err as Error).message}`
+        );
+      }
+    }
+
+    strapi.log.info(`chmuSync done: ${JSON.stringify(stats)}`);
+    return stats;
   },
 }));

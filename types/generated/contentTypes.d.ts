@@ -521,10 +521,10 @@ export interface ApiReportReport extends Struct.CollectionTypeSchema {
     createdAt: Schema.Attribute.DateTime;
     createdBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
       Schema.Attribute.Private;
-    device_id: Schema.Attribute.String & Schema.Attribute.Required;
+    device_id: Schema.Attribute.String;
     flow_rate_lps: Schema.Attribute.Decimal;
     flow_scale: Schema.Attribute.Integer;
-    has_odor: Schema.Attribute.Boolean & Schema.Attribute.Required;
+    has_odor: Schema.Attribute.Boolean;
     is_flowing: Schema.Attribute.Boolean & Schema.Attribute.Required;
     locale: Schema.Attribute.String & Schema.Attribute.Private;
     localizations: Schema.Attribute.Relation<
@@ -543,8 +543,7 @@ export interface ApiReportReport extends Struct.CollectionTypeSchema {
     user_lng: Schema.Attribute.Decimal & Schema.Attribute.Private;
     water_clarity: Schema.Attribute.Enumeration<
       ['crystal_clear', 'clear', 'slightly_turbid', 'turbid', 'heavily_turbid']
-    > &
-      Schema.Attribute.Required;
+    >;
   };
 }
 

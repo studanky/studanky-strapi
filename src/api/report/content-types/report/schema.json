@@ -17,11 +17,11 @@
     },
     "has_odor": {
       "type": "boolean",
-      "required": true
+      "required": false
     },
     "water_clarity": {
       "type": "enumeration",
-      "required": true,
+      "required": false,
       "enum": [
         "crystal_clear",
         "clear",
@@ -39,7 +39,7 @@
     },
     "device_id": {
       "type": "string",
-      "required": true
+      "required": false
     },
     "user_lat": {
       "type": "decimal",

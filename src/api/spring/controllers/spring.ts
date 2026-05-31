@@ -41,4 +41,14 @@ export default factories.createCoreController(SPRING_UID, ({ strapi }) => ({
 
     return { data: result.data, meta: { pagination: result.pagination } };
   },
+
+  /**
+   * POST /api/springs/sync-chmu
+   * Manual trigger for the ČHMÚ sync (ops). Authenticated — call with an admin
+   * API token; the scheduled cron uses the same service.
+   */
+  async syncChmu(ctx) {
+    const stats = await strapi.service(SPRING_UID).syncFromChmu();
+    return { data: stats };
+  },
 }));

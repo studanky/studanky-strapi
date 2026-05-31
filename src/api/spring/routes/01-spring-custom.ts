@@ -3,8 +3,6 @@
  *
  * Prefixed `01-` so they load BEFORE the core router — otherwise `/springs/map`
  * would be swallowed by the core `/springs/:documentId` route (id = "map").
- *
- * `/sync-chmu` (admin-only) is added in a later step (ČHMÚ sync).
  */
 
 export default {
@@ -20,6 +18,12 @@ export default {
       path: "/springs/:documentId/reports",
       handler: "spring.reports",
       config: { auth: false }, // public read
+    },
+    {
+      method: "POST",
+      path: "/springs/sync-chmu",
+      handler: "spring.syncChmu",
+      // Authenticated (NO auth:false): call with an admin API token. Ops-only.
     },
   ],
 };
