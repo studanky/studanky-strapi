@@ -440,6 +440,33 @@ export interface AdminUser extends Struct.CollectionTypeSchema {
   };
 }
 
+export interface ApiOwnerOwner extends Struct.CollectionTypeSchema {
+  collectionName: 'owners';
+  info: {
+    displayName: 'Owner';
+    pluralName: 'owners';
+    singularName: 'owner';
+  };
+  options: {
+    draftAndPublish: false;
+  };
+  attributes: {
+    contact_email: Schema.Attribute.Email;
+    createdAt: Schema.Attribute.DateTime;
+    createdBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
+      Schema.Attribute.Private;
+    locale: Schema.Attribute.String & Schema.Attribute.Private;
+    localizations: Schema.Attribute.Relation<'oneToMany', 'api::owner.owner'> &
+      Schema.Attribute.Private;
+    name: Schema.Attribute.String & Schema.Attribute.Required;
+    publishedAt: Schema.Attribute.DateTime;
+    type: Schema.Attribute.Enumeration<['chmu']>;
+    updatedAt: Schema.Attribute.DateTime;
+    updatedBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
+      Schema.Attribute.Private;
+  };
+}
+
 export interface ApiReportReport extends Struct.CollectionTypeSchema {
   collectionName: 'reports';
   info: {
@@ -1080,6 +1107,7 @@ declare module '@strapi/strapi' {
       'admin::transfer-token': AdminTransferToken;
       'admin::transfer-token-permission': AdminTransferTokenPermission;
       'admin::user': AdminUser;
+      'api::owner.owner': ApiOwnerOwner;
       'api::report.report': ApiReportReport;
       'api::spring.spring': ApiSpringSpring;
       'plugin::content-releases.release': PluginContentReleasesRelease;
