@@ -546,6 +546,30 @@ export interface ApiSpringSpring extends Struct.CollectionTypeSchema {
           localized: true;
         };
       }>;
+    external_id: Schema.Attribute.String &
+      Schema.Attribute.SetPluginOptions<{
+        i18n: {
+          localized: false;
+        };
+      }>;
+    external_source: Schema.Attribute.String &
+      Schema.Attribute.SetPluginOptions<{
+        i18n: {
+          localized: false;
+        };
+      }>;
+    last_flow_rate_lps: Schema.Attribute.Decimal &
+      Schema.Attribute.SetPluginOptions<{
+        i18n: {
+          localized: false;
+        };
+      }>;
+    last_flow_scale: Schema.Attribute.Integer &
+      Schema.Attribute.SetPluginOptions<{
+        i18n: {
+          localized: false;
+        };
+      }>;
     lat: Schema.Attribute.Decimal &
       Schema.Attribute.Required &
       Schema.Attribute.SetPluginOptions<{
