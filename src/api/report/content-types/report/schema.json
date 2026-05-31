@@ -43,16 +43,28 @@
     },
     "user_lat": {
       "type": "decimal",
+      "private": true,
       "required": false
     },
     "user_lng": {
-      "type": "decimal"
+      "type": "decimal",
+      "private": true
     },
     "spring": {
       "type": "relation",
       "relation": "manyToOne",
       "target": "api::spring.spring",
       "inversedBy": "reports"
+    },
+    "flow_scale": {
+      "type": "integer"
+    },
+    "flow_rate_lps": {
+      "type": "decimal"
+    },
+    "client_report_id": {
+      "type": "string",
+      "unique": true
     }
   }
 }

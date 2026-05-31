@@ -517,10 +517,13 @@ export interface ApiReportReport extends Struct.CollectionTypeSchema {
     draftAndPublish: false;
   };
   attributes: {
+    client_report_id: Schema.Attribute.String & Schema.Attribute.Unique;
     createdAt: Schema.Attribute.DateTime;
     createdBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
       Schema.Attribute.Private;
     device_id: Schema.Attribute.String & Schema.Attribute.Required;
+    flow_rate_lps: Schema.Attribute.Decimal;
+    flow_scale: Schema.Attribute.Integer;
     has_odor: Schema.Attribute.Boolean & Schema.Attribute.Required;
     is_flowing: Schema.Attribute.Boolean & Schema.Attribute.Required;
     locale: Schema.Attribute.String & Schema.Attribute.Private;
@@ -536,8 +539,8 @@ export interface ApiReportReport extends Struct.CollectionTypeSchema {
     updatedAt: Schema.Attribute.DateTime;
     updatedBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
       Schema.Attribute.Private;
-    user_lat: Schema.Attribute.Decimal;
-    user_lng: Schema.Attribute.Decimal;
+    user_lat: Schema.Attribute.Decimal & Schema.Attribute.Private;
+    user_lng: Schema.Attribute.Decimal & Schema.Attribute.Private;
     water_clarity: Schema.Attribute.Enumeration<
       ['crystal_clear', 'clear', 'slightly_turbid', 'turbid', 'heavily_turbid']
     > &
