@@ -6,7 +6,16 @@ This document describes the security mechanisms implemented for public API endpo
 
 **Location:** `src/api/report/policies/is-authentic-report.ts`
 
-The `POST /api/reports` endpoint uses a multi-layered security approach to prevent bot spam without requiring user registration.
+The `POST /api/reports` endpoint uses a multi-layered approach to deter bot spam without requiring user registration.
+
+> **Trust posture (important).** The HMAC + timestamp layer is **best-effort
+> anti-bot only**, not a source of trust: the shared secret is embedded in the
+> client app (extractable), and the 5-minute replay window is incompatible with
+> an offline-first queue (sign at queue flush). Real trustworthiness comes from
+> the **GPS geofence (200 m)** + (Phase 3) trust score, verified/anonymous origin,
+> and false-report flagging — not from the signature. A server-side QR signature
+> (`HMAC(documentId, SERVER_SECRET)`, secret **only on the server**) is a separate
+> concern and must never ship the secret to the app. See [roadmap](./roadmap.md).
 
 ### Security Layers
 
@@ -14,7 +23,7 @@ The `POST /api/reports` endpoint uses a multi-layered security approach to preve
 |-------|--------|---------|
 | HMAC Signature | `X-App-Signature` | Proves request originates from legitimate app |
 | Timestamp | `X-Timestamp` | Prevents replay attacks (5-minute window) |
-| Geo-Fence | Request body | Validates user proximity to spring (≤500m) |
+| Geo-Fence | Request body | Validates user proximity to spring (≤200m) |
 
 ### Signature Construction
 
@@ -43,7 +52,7 @@ Uses the Haversine formula (`src/utils/geo.ts`) to calculate great-circle distan
 - User's reported GPS coordinates (`user_lat`, `user_lng`)
 - Spring's stored coordinates (`lat`, `lng`)
 
-Distance limit: **500 meters**
+Distance limit: **200 meters** (`MAX_DISTANCE_METERS` in the policy; spec §8.1 / návrh §6)
 
 > **Note:** Geo-fence is bypassed if `user_lat`/`user_lng` are not provided.
 

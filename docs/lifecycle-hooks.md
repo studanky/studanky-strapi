@@ -1,6 +1,11 @@
 # Lifecycle Hooks
 
-This document describes custom lifecycle hooks implemented in this Strapi application.
+This document describes custom lifecycle hooks in this Strapi application.
+
+> **Design note:** lifecycle hooks are used **only** for self-contained side
+> effects (QR generation below). Cross-entity business logic — notably status
+> denormalization — lives in services, not hooks, so it is deterministic and
+> testable. See [Status Denormalization](./denormalization.md).
 
 ## Spring Content Type
 
@@ -64,102 +69,13 @@ Error case:
 
 ## Report Content Type
 
-### Status Propagation to Spring
+### Status Propagation — moved to a service
 
-**Location:** `src/api/report/content-types/report/lifecycles.ts`
+The earlier `report.afterCreate` hook that propagated `is_flowing` to the parent
+Spring **has been removed**. Status denormalization (`current_status`,
+`status_updated_at`, `last_flow_scale`, `last_flow_rate_lps`) is now the sole
+responsibility of `spring.refreshLatest(...)`, called explicitly by the ČHMÚ sync
+(and, in Phase 2, by report submit).
 
-When a Report is created, the parent Spring's `current_status` is automatically updated based on the Report's `is_flowing` field — but only if the report is newer than the Spring's last status update.
-
-#### Trigger
-
-- **Event:** `afterCreate`
-- **Content Type:** `api::report.report`
-
-#### Business Context
-
-Field reports may be submitted with delays (e.g., offline sync scenarios). The system must ensure Spring always reflects the state from the **most recent measurement time** (`reported_at`), not the most recently received API request.
-
-#### Behavior
-
-1. Checks if Report is linked to a Spring
-2. Fetches the Spring document to compare timestamps
-3. Applies the **"Newer-Than" Rule**:
-   - If `Report.reported_at > Spring.status_updated_at` → Update Spring
-   - If `Report.reported_at <= Spring.status_updated_at` → Skip (report is stale)
-   - If `Spring.status_updated_at` is `null` → Always update (first report)
-4. Maps `is_flowing` boolean to `current_status` enum
-5. Updates Spring draft version
-6. If Spring was already published, also updates the published version
-
-#### Status Mapping
-
-| Report.is_flowing | Spring.current_status |
-|-------------------|----------------------|
-| `true`            | `is_flowing`         |
-| `false`           | `is_not_flowing`     |
-
-#### Draft & Publish Handling
-
-Strapi v5 maintains separate draft and published versions. The hook handles them intelligently:
-
-| Spring State | Hook Behavior |
-|-------------|---------------|
-| Draft only (never published) | Update draft only |
-| Published (no pending changes) | Update published + draft |
-| Published + Modified draft | Update BOTH independently |
-
-```
-┌─────────────────────────────────────────────────────────┐
-│ Report Created                                          │
-├─────────────────────────────────────────────────────────┤
-│ 1. Fetch Spring draft (always exists)                   │
-│ 2. Fetch Spring published (may be null)                 │
-│ 3. If published is null → Update draft only             │
-│ 4. If published exists:                                 │
-│    a) Update published via db.query() (bypasses sync)   │
-│    b) Update draft via Document Service                 │
-└─────────────────────────────────────────────────────────┘
-```
-
-> **Important:** The hook uses `strapi.db.query()` for published updates because `strapi.documents().update({ status: 'published' })` would sync ALL draft changes to published. The db.query approach updates only `current_status` and `status_updated_at` fields directly in the database.
-
-> **Note:** The hook NEVER publishes uncommitted draft changes. Managers can have edits in progress without risk of them being auto-published.
-
-#### Error Handling
-
-- Errors during status propagation are logged but do not block Report creation
-- Missing Spring relation is gracefully handled (skipped with debug log)
-- Non-existent Spring documentId is handled (logged as warning)
-
-#### Logs
-
-Successful propagation:
-```
-[info] Report <reportDocId>: Propagating status to Spring <springDocId>
-[info] Report <reportDocId>: Updated Spring <springDocId> published version to is_flowing (db.query)
-[info] Report <reportDocId>: Updated Spring <springDocId> draft to is_flowing
-```
-
-Skipped (not newer):
-```
-[info] Report <reportDocId>: Skipping - report (2024-01-15T10:00:00Z) is not newer than Spring status (2024-01-16T08:00:00Z)
-```
-
-No Spring linked:
-```
-[debug] Report <reportDocId>: No spring linked, skipping status propagation
-```
-
-Error case:
-```
-[error] Report <reportDocId>: Failed to propagate status to Spring <springDocId> <error details>
-```
-
-#### Race Conditions
-
-When multiple reports arrive simultaneously:
-- Each request fetches fresh Spring data before comparison
-- The report with the newer `reported_at` will ultimately determine the final state
-- Database-level transactions in Strapi v5 provide basic consistency
-
-> **Note:** For mission-critical atomic updates, consider implementing a database-level trigger or a custom service with explicit row locking.
+Rationale and the draft/published dual-write details are documented in
+[Status Denormalization](./denormalization.md).

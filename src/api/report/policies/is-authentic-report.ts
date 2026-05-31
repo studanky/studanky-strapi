@@ -14,7 +14,7 @@ import { haversineDistance } from "../../../utils/geo";
 
 // Configuration
 const TIMESTAMP_MAX_AGE_SECONDS = 5 * 60; // 5 minutes
-const MAX_DISTANCE_METERS = 500;
+const MAX_DISTANCE_METERS = 200; // geofence per spec 8.1 / návrh §6
 
 interface ReportRequestBody {
     data: {

@@ -1,52 +1,61 @@
 # Admin Panel Filtering
 
-This document describes record-level filtering implemented for the Admin Panel.
+Record-level scoping for the Admin Panel: admin users see only the Springs they
+manage. This is an **admin-panel access boundary only** — public content API
+access is governed by RBAC + the custom controllers/policies.
 
-## Spring Collection - Manager-Based Filtering
+## Spring scoping — manager-based
 
-**Location:** `src/index.ts`
+**Location:** `src/middlewares/document/spring-scope.ts`
+(registered in `src/index.ts` via `strapi.documents.use(createSpringScope(strapi))`).
 
-Restricts Spring entries visible in the Admin Panel based on the `managers` relation.
-
-### Behavior
-
-| User | Springs Visible |
+| User | Springs visible |
 |------|-----------------|
-| Super Admin | All |
-| Any other admin | Only where user is in `managers` relation |
+| Super Admin (`strapi-super-admin`) | All |
+| Any other admin | Only where they are in the `managers` relation |
+| Everyone else (public, users-permissions, API token, internal) | Unaffected |
 
-### Implementation
+Actions affected: `findMany`, `findOne`, `update`, `delete`.
 
-Uses a Document Service middleware registered in `register()` lifecycle:
+## How it works
 
-```typescript
-strapi.documents.use(async (context, next) => {
-  // Filter logic for api::spring.spring
-});
+A Document Service middleware scoped to `api::spring.spring`:
+
+1. Skips anything that isn't a scoped Spring action.
+2. **No request context** (cron, bootstrap, internal service calls) → no filter.
+3. **Admin gate:** applies the filter **only when the request used the admin auth
+   strategy** — `ctx.state.auth.strategy.name === 'admin'`. A second sanity check
+   verifies the admin user shape (`Array.isArray(user.roles)`; users-permissions
+   users have a single `role`, not `roles[]`).
+4. Super Admin → no filter.
+5. Otherwise merges `managers: { id: { $eq: user.id } }` into existing filters via
+   **`$and`**, so the admin's own search/sort in the list view is preserved.
+
+```ts
+context.params.filters = {
+  $and: [context.params.filters ?? {}, { managers: { id: { $eq: user.id } } }],
+};
 ```
 
-### Actions Affected
+## Why gate on the auth strategy, not `ctx.state.user`
 
-- `findMany` — List view
-- `findOne` — Single record access
-- `update` — Edit access
-- `delete` — Delete access
+If the filter keyed on the mere presence of `ctx.state.user`, a logged-in
+**users-permissions** user hitting the public `/api/springs/map` would get the
+`managers` filter applied (with their non-admin id) and see **nothing**. Gating on
+the admin strategy keeps the public API correct while still scoping the panel.
 
-### How It Works
+## Notes
 
-1. Middleware intercepts Document Service calls for `api::spring.spring`
-2. Gets current admin user via `strapi.requestContext.get()`
-3. Checks if user has `strapi-super-admin` role → skip filtering
-4. Otherwise injects filter: `managers.id = currentUserId`
+- The `managers` relation is `manyWay → admin::user` (a manager can own many
+  springs; a spring can have many managers).
+- `update` / `delete` operate by `documentId`; if you find the injected filter
+  does not constrain a write in your Strapi version, add an explicit ownership
+  check before the write.
+- Restrict who may edit the `managers` field itself (super-admin only) via admin
+  RBAC so owners cannot grant themselves access.
 
-### Logs
+## Logs
 
 ```
-[debug] Spring filter applied for admin user <id> on action <action>
+[debug] Spring scope applied for admin user <id> on action <action>
 ```
-
-### Technical Notes
-
-- Filter uses Strapi's deep filtering: `managers: { id: { $eq: userId } }`
-- Super Admin detection uses `role.code === "strapi-super-admin"`
-- Unauthenticated requests (no user in context) are not filtered

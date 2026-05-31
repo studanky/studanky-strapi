@@ -1,0 +1,42 @@
+# Database Indexes & Migrations
+
+Indexes that the Content-Type Builder cannot express are created by a portable
+knex migration in `database/migrations/`. Strapi runs pending migrations on boot
+and records them in `strapi_migrations`. The migration uses the knex schema
+builder so it works across the supported dialects (sqlite / mysql / postgres).
+
+**File:** `database/migrations/2026.05.31T00.00.00.spring-report-indexes.js`
+
+| Table | Index | Type | Purpose |
+|---|---|---|---|
+| `springs` | `(external_source, external_id)` | index | fast ČHMÚ pairing lookup |
+| `springs` | `(lat, lng)` | index | map bbox query |
+| `springs` | `(status_updated_at)` | index | freshness / sorting |
+| `reports` | `(client_report_id)` | **UNIQUE** | offline-queue idempotence |
+| `reports` | `(reported_at)` | index | history sorting |
+
+## Why springs pairing is NOT a unique index
+
+Spring has **Draft & Publish**, so each published document is stored as **two
+rows** (draft + published) that share the same `external_source` / `external_id`
+(non-localized fields). A naive DB `UNIQUE` across all rows would reject the
+published row and break the ČHMÚ sync. So:
+
+- the DB index on `(external_source, external_id)` is **plain (non-unique)**;
+- pairing uniqueness is enforced in the [ČHMÚ sync](./chmu-sync.md) upsert
+  (`findFirst` before `create`), and ČHMÚ is the only writer of `external_id`.
+
+This is also why a generic Strapi `unique: true` attribute does not produce a DB
+unique index for D&P / i18n content types — Strapi enforces such uniqueness at
+the application layer.
+
+## Why reports `client_report_id` IS a unique index
+
+Report has Draft & Publish **disabled** → one row per document, so a DB UNIQUE is
+safe and gives a hard idempotence guarantee for the offline submit queue. The
+index permits multiple `NULL`s (ČHMÚ reports carry no `client_report_id`).
+
+## `report.spring`
+
+Not added here — already indexed via Strapi's relation link table
+(`reports_spring_lnk`).

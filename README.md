@@ -6,12 +6,13 @@ Built with [Strapi v5](https://strapi.io) and TypeScript.
 
 ## ✨ Features
 
-- **Spring Management** — CRUD for spring locations with i18n support
-- **Status Reports** — Public endpoint for hikers to submit spring status
+- **Source-neutral canonical model** — every data source is an adapter mapping into one model
+- **ČHMÚ sync** — nightly cron + manual endpoint imports spring discharge data
+- **Denormalized map status** — cached current status for a cheap map endpoint
+- **Public read API** — `/springs/map` (bbox) and `/springs/:documentId/reports`
 - **QR Codes** — Auto-generated for each spring (encode `documentId`)
-- **Manager Access Control** — Admin users see only springs they manage
-- **HMAC Authentication** — Bot prevention without user registration
-- **Geo-Fence Validation** — Reports validated against spring proximity
+- **Manager Access Control** — admin users see only springs they manage
+- **Report anti-bot** — HMAC + 200 m geo-fence (best-effort; see API Security)
 
 ## 🚀 Getting Started
 
@@ -49,10 +50,16 @@ Custom backend logic is documented in [`docs/`](./docs/):
 
 | Document | Description |
 |----------|-------------|
-| [API Security](./docs/api-security.md) | HMAC signature, replay protection, geo-fencing |
-| [Flutter Integration](./docs/flutter-integration.md) | Mobile client integration guide |
+| [ČHMÚ Sync](./docs/chmu-sync.md) | Source adapter, sync service, cron, manual endpoint |
+| [Public API](./docs/public-api.md) | Custom endpoints: map (bbox) + report history |
+| [Denormalization](./docs/denormalization.md) | `refreshLatest`, cached status, flow scale |
+| [Database & Migrations](./docs/database-migrations.md) | Indexes + why pairing is non-unique |
 | [Admin Filtering](./docs/admin-filtering.md) | Manager-based access control for Springs |
-| [Lifecycle Hooks](./docs/lifecycle-hooks.md) | QR code generation, status propagation |
+| [Lifecycle Hooks](./docs/lifecycle-hooks.md) | QR code generation (denorm moved to a service) |
+| [API Security](./docs/api-security.md) | HMAC (best-effort), replay window, 200 m geo-fence |
+| [Flutter Integration](./docs/flutter-integration.md) | Mobile client integration guide |
+| [Roadmap](./docs/roadmap.md) | Next steps & Phase 2 / 3 plan |
+| [Product spec](./docs/studanky-specifikace.md) · [Backend design](./docs/studanky-strapi-navrh.md) | Source-of-truth design docs |
 
 ## 🔐 Environment Variables
 
@@ -67,6 +74,7 @@ Custom backend logic is documented in [`docs/`](./docs/):
 | `JWT_SECRET` | Secret for user JWT tokens |
 | `ENCRYPTION_KEY` | Key for data encryption |
 | `HMAC_SECRET` | Shared secret for Report API authentication |
+| `CRON_ENABLED` | Enable scheduled tasks incl. ČHMÚ sync (default `true`) |
 
 ## ⚙️ Deployment
 
