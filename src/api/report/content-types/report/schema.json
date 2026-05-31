@@ -15,17 +15,6 @@
       "type": "boolean",
       "required": true
     },
-    "flow_strength": {
-      "type": "enumeration",
-      "required": true,
-      "enum": [
-        "very_weak",
-        "weak",
-        "moderate",
-        "strong",
-        "very_strong"
-      ]
-    },
     "has_odor": {
       "type": "boolean",
       "required": true

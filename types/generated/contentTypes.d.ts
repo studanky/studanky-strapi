@@ -521,10 +521,6 @@ export interface ApiReportReport extends Struct.CollectionTypeSchema {
     createdBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
       Schema.Attribute.Private;
     device_id: Schema.Attribute.String & Schema.Attribute.Required;
-    flow_strength: Schema.Attribute.Enumeration<
-      ['very_weak', 'weak', 'moderate', 'strong', 'very_strong']
-    > &
-      Schema.Attribute.Required;
     has_odor: Schema.Attribute.Boolean & Schema.Attribute.Required;
     is_flowing: Schema.Attribute.Boolean & Schema.Attribute.Required;
     locale: Schema.Attribute.String & Schema.Attribute.Private;
