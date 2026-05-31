@@ -4,7 +4,12 @@
 
 import { factories } from "@strapi/strapi";
 import type { Core } from "@strapi/strapi";
-import { listSpringStations, fetchLatestValue } from "./chmu-client";
+import {
+  listSpringStations,
+  fetchLatestValue,
+  fetchRecentValue,
+  recentMonths,
+} from "./chmu-client";
 import { mapWithConcurrency } from "../../../utils/concurrency";
 
 const SPRING_UID = "api::spring.spring";
@@ -19,12 +24,6 @@ interface LatestReport {
   flow_scale: number | null;
   flow_rate_lps: number | null;
   reported_at: string;
-}
-
-interface SpringStatusFields {
-  documentId: string;
-  current_status: SpringStatus;
-  status_updated_at: string | null;
 }
 
 /** Resolves the configured default locale dynamically (falls back to en). */
@@ -52,10 +51,12 @@ export default factories.createCoreService(SPRING_UID, ({ strapi }) => ({
    * Called explicitly by ČHMÚ sync and (Phase 2) report submit — NOT from a
    * lifecycle hook (invariant: denormalization happens only here).
    *
-   * Spring keeps Draft & Publish, so the cached status must reach the PUBLISHED
-   * row (the map reads published). We update published via `db.query()` to avoid
-   * the Document Service syncing unrelated draft edits into published, and the
-   * draft via the Document Service.
+   * Spring keeps Draft & Publish (the map reads the published row). We write the
+   * draft AND published rows in one raw `db.query` update with the same
+   * `updatedAt`, so both rows stay identical → the entry remains "Published"
+   * (no spurious "Modified" badge). Using `db.query` also bypasses the Document
+   * Service, so unrelated uncommitted draft edits to OTHER fields are preserved
+   * and never auto-published.
    */
   async refreshLatest(springDocumentId: string): Promise<void> {
     if (!springDocumentId) {
@@ -87,45 +88,15 @@ export default factories.createCoreService(SPRING_UID, ({ strapi }) => ({
       last_flow_rate_lps: latest.flow_rate_lps ?? null,
     };
 
-    // 2) Is there a published version?
-    const published = (await strapi.documents(SPRING_UID).findOne({
-      documentId: springDocumentId,
-      status: "published",
-      fields: ["current_status", "status_updated_at"],
-    })) as SpringStatusFields | null;
-
-    if (!published) {
-      // Draft only → update draft via Document Service.
-      await strapi.documents(SPRING_UID).update({
-        documentId: springDocumentId,
-        data,
-      });
-      strapi.log.debug(
-        `refreshLatest: Spring ${springDocumentId} draft → ${newStatus} (not published)`
-      );
-      return;
-    }
-
-    // 3a) Published row → write directly via db.query to bypass draft sync.
+    // 2) Update BOTH the draft and published rows in a single raw update with
+    //    the same updatedAt → rows stay in sync, entry stays "Published".
     await strapi.db.query(SPRING_UID).updateMany({
-      where: {
-        documentId: springDocumentId,
-        publishedAt: { $notNull: true },
-      },
-      data: {
-        ...data,
-        updatedAt: new Date().toISOString(),
-      },
-    });
-
-    // 3b) Draft row → Document Service (preserves other uncommitted draft edits).
-    await strapi.documents(SPRING_UID).update({
-      documentId: springDocumentId,
-      data,
+      where: { documentId: springDocumentId },
+      data: { ...data, updatedAt: new Date().toISOString() },
     });
 
     strapi.log.debug(
-      `refreshLatest: Spring ${springDocumentId} draft+published → ${newStatus}`
+      `refreshLatest: Spring ${springDocumentId} → ${newStatus} (draft+published)`
     );
   },
 
@@ -219,6 +190,7 @@ export default factories.createCoreService(SPRING_UID, ({ strapi }) => ({
       created: 0,
       updated: 0,
       reports: 0,
+      recent: 0, // values that came from the recent/ fallback (not now/)
       skipped: 0,
       errors: 0,
     };
@@ -284,10 +256,22 @@ export default factories.createCoreService(SPRING_UID, ({ strapi }) => ({
       }
     }
 
-    // Phase B — download latest values, concurrency-limited.
+    // Phase B — download latest values, concurrency-limited. `now/` is
+    // incomplete (many objects have no now file), so fall back to the recent/
+    // monthly file (current month, then previous) which carries equally fresh
+    // last points for those objects.
+    const [curMonth, prevMonth] = recentMonths();
     const fetched = await mapWithConcurrency(targets, 8, async (t) => {
       try {
-        return { t, value: await fetchLatestValue(t.externalId) };
+        let value = await fetchLatestValue(t.externalId); // now/
+        let viaRecent = false;
+        if (!value) {
+          value = await fetchRecentValue(t.externalId, curMonth);
+          if (!value) value = await fetchRecentValue(t.externalId, prevMonth);
+          viaRecent = value != null;
+        }
+        if (viaRecent) stats.recent++;
+        return { t, value };
       } catch (err) {
         stats.errors++;
         strapi.log.warn(

@@ -12,9 +12,11 @@
  * Source docs: docs/chmu_groundwater_api_documentation.md (branch `now/`).
  */
 
-const BASE = "https://opendata.chmi.cz/hydrology/groundwater/now";
-const META1_URL = `${BASE}/metadata/meta1.json`;
-const dataUrl = (objID: string) => `${BASE}/data/${objID}_D.json`;
+const ROOT = "https://opendata.chmi.cz/hydrology/groundwater";
+const META1_URL = `${ROOT}/now/metadata/meta1.json`;
+const nowDataUrl = (objID: string) => `${ROOT}/now/data/${objID}_D.json`;
+const recentDataUrl = (objID: string, yyyymm: string) =>
+  `${ROOT}/recent/data/${objID}_D_${yyyymm}.json`;
 
 /** Spring station from meta1.json (OBJECT_TYPE === 'spring'). */
 export interface ChmuStation {
@@ -153,9 +155,39 @@ export async function listSpringStations(): Promise<ChmuStation[]> {
   return parseStations(await fetchJson(META1_URL));
 }
 
-/** Latest discharge value for a station from `now/data/{objID}_D.json`. */
+/**
+ * Latest discharge value from `now/data/{objID}_D.json`.
+ *
+ * Note: `now/` is INCOMPLETE — many spring objects have no `now` data file
+ * (404). Use `fetchRecentValue` as a fallback (see `recentMonths`).
+ */
 export async function fetchLatestValue(
   externalId: string
 ): Promise<ChmuValue | null> {
-  return parseLatestValue(await fetchJson(dataUrl(externalId)));
+  return parseLatestValue(await fetchJson(nowDataUrl(externalId)));
+}
+
+/**
+ * Latest discharge value from `recent/data/{objID}_D_{YYYYMM}.json` (monthly
+ * file, same structure as `now`). Returns the newest point in that month, or
+ * null if the file is absent / has no YD/L_S data.
+ */
+export async function fetchRecentValue(
+  externalId: string,
+  yyyymm: string
+): Promise<ChmuValue | null> {
+  return parseLatestValue(await fetchJson(recentDataUrl(externalId, yyyymm)));
+}
+
+/**
+ * Current and previous month as `YYYYMM` (UTC) — the recent files to probe as a
+ * fallback (current month, then previous for the first days of a new month).
+ */
+export function recentMonths(now: Date = new Date()): [string, string] {
+  const ym = (y: number, mZeroBased: number) =>
+    `${y}${String(mZeroBased + 1).padStart(2, "0")}`;
+  const y = now.getUTCFullYear();
+  const m = now.getUTCMonth();
+  const prev = new Date(Date.UTC(y, m - 1, 1));
+  return [ym(y, m), ym(prev.getUTCFullYear(), prev.getUTCMonth())];
 }

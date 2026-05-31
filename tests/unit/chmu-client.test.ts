@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   parseStations,
   parseLatestValue,
+  recentMonths,
 } from "../../src/api/spring/services/chmu-client";
 
 const meta1 = {
@@ -89,5 +90,19 @@ describe("parseLatestValue", () => {
     expect(parseLatestValue({ objList: [{ tsList: [{ tsConID: "YD", unit: "L_S", tsData: [] }] }] })).toBeNull();
     expect(parseLatestValue({ objList: [{ tsList: [{ tsConID: "HD", unit: "MNM", tsData: [{ dt: "x", value: 1 }] }] }] })).toBeNull();
     expect(parseLatestValue(null)).toBeNull();
+  });
+});
+
+describe("recentMonths", () => {
+  it("returns current and previous month as YYYYMM", () => {
+    expect(recentMonths(new Date("2026-05-15T00:00:00Z"))).toEqual(["202605", "202604"]);
+  });
+
+  it("handles the year boundary", () => {
+    expect(recentMonths(new Date("2026-01-10T00:00:00Z"))).toEqual(["202601", "202512"]);
+  });
+
+  it("handles December", () => {
+    expect(recentMonths(new Date("2026-12-31T23:00:00Z"))).toEqual(["202612", "202611"]);
   });
 });

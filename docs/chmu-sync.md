@@ -26,6 +26,15 @@ Pure functions returning neutral DTOs (no Strapi awareness):
 - `fetchLatestValue(externalId)` — GET `now/data/{objID}_D.json`, selects the
   series by **`tsConID === 'YD' && unit === 'L_S'`** (discharge in l/s, never by
   array order), returns the newest `tsData` point `{ dt, valueLps }`, or `null`.
+- `fetchRecentValue(externalId, yyyymm)` — same, from `recent/data/{objID}_D_{YYYYMM}.json`
+  (monthly file, identical structure). Fallback when `now/` has no file.
+- `recentMonths()` — `[currentYYYYMM, previousYYYYMM]` (UTC) to probe.
+
+> **`now/` is incomplete.** Empirically only ~46% of spring objects have a
+> `now/data` file; the rest return 404 even though `recent/data` carries equally
+> fresh last points for them. So the value fetch falls back **now → recent
+> (current month → previous month)**, giving complete coverage. `parseLatestValue`
+> is reused for both (same JSON shape).
 
 Hardening: per-request timeout (`AbortController`, 15 s) + retry (2×) with
 backoff; HTTP `404` → `null` (object file may not exist); empty/missing series → `null`.
@@ -38,8 +47,9 @@ runs in three phases:
 1. **Upsert stations** (sequential, SQLite-friendly). Looked up by
    `(external_source, external_id)` in the **default locale**; created springs
    are published so they appear on the map. New springs start `current_status = 'unknown'`.
-2. **Fetch latest values** with bounded concurrency (limit 8) — hundreds of small
-   file downloads; one failure never aborts the run (`try/catch` per object).
+2. **Fetch latest values** with bounded concurrency (limit 8): `now/` first,
+   then `recent/` (current → previous month) when `now/` has no file. One
+   failure never aborts the run (`try/catch` per object).
 3. **Append report when newer.** A Report (`is_flowing = valueLps > 0`,
    `flow_rate_lps`, `flow_scale` via [`flowScaleFromLps`](./denormalization.md#flow-scale),
    `reported_at = dt`) is created only if `dt` is strictly newer than the spring's
@@ -62,10 +72,11 @@ phase-1 `findFirst`-before-`create` upsert. See [Database & Migrations](./databa
 `syncFromChmu()` returns and logs a summary:
 
 ```json
-{ "stations": 85, "created": 85, "updated": 0, "reports": 39, "skipped": 46, "errors": 0 }
+{ "stations": 85, "created": 85, "updated": 0, "reports": 85, "recent": 46, "skipped": 0, "errors": 0 }
 ```
 
-`skipped` = stations with no current YD/L_S value, or whose `dt` is not newer.
+`recent` = values served by the `recent/` fallback (no `now/` file). `skipped` =
+stations with no value anywhere, or whose `dt` is not newer than the cached one.
 
 ## Scheduling
 
@@ -73,7 +84,7 @@ phase-1 `findFirst`-before-`create` upsert. See [Database & Migrations](./databa
 
 ```ts
 chmuSync: { task: ({ strapi }) => strapi.service('api::spring.spring').syncFromChmu(),
-            options: { rule: '30 0 * * *', tz: 'Europe/Prague' } }
+            options: { rule: '30 3 * * *', tz: 'Europe/Prague' } }
 ```
 
 Enabled in `config/server.ts` via `cron.enabled = env.bool('CRON_ENABLED', true)`.

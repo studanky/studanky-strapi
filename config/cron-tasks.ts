@@ -8,7 +8,7 @@ export default {
       await strapi.service("api::spring.spring").syncFromChmu();
     },
     options: {
-      rule: "30 0 * * *", // 00:30 local time
+      rule: "30 3 * * *", // 03:30 local time
       tz: "Europe/Prague",
     },
   },

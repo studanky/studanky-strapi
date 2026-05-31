@@ -23,10 +23,13 @@ This service method is the **only** place that writes the cached fields
    *newest-wins*.
 2. Derives `current_status` from `is_flowing` and copies `flow_scale` /
    `flow_rate_lps` / `reported_at`.
-3. Writes to **both** the draft and published rows (Spring has Draft & Publish):
-   - **published** via `strapi.db.query().updateMany(...)` — bypasses the
-     Document Service so unrelated uncommitted draft edits are *not* published;
-   - **draft** via the Document Service.
+3. Writes the **draft and published rows together** in one
+   `strapi.db.query().updateMany({ where: { documentId } })` with the **same
+   `updatedAt`** (Spring has Draft & Publish). Because both rows end up identical,
+   the entry stays **"Published"** in the admin (no spurious "Modified" badge),
+   the map (published) sees the status, and bypassing the Document Service means
+   unrelated uncommitted draft edits to *other* fields are preserved and never
+   auto-published.
 
 It is idempotent (always recomputes from the latest report) and safe to call
 repeatedly. Callers: [ČHMÚ sync](./chmu-sync.md) and (Phase 2) report submit.
