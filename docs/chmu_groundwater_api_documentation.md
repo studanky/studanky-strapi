@@ -985,6 +985,13 @@ Protože API funguje jako statické soubory, je vhodné počítat s těmito situ
 
 Ne každý objekt musí mít soubor pro každou kombinaci období nebo typu dat.
 
+> **Empiricky ověřeno (2026-05):** větev `now/` je pro prameny **neúplná** — řada
+> objektů uvedených v `now/metadata/meta1.json` nemá v `now/data/` žádný soubor
+> (HTTP 404), zatímco `recent/data/{objID}_D_{YYYYMM}.json` pro ně poslední
+> hodnotu obsahuje. Pro úplné pokrytí je proto vhodný fallback `now → recent`.
+> Tvar prezentace `now/` jako „poslední hodnoty pro objekty" (sekce 1) tedy
+> neznamená, že soubor existuje pro každý objekt.
+
 ### `tsData` může být prázdné
 
 Syntakticky existující časová řada nemusí obsahovat žádné hodnoty.
