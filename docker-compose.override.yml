@@ -1,0 +1,27 @@
+# =============================================================================
+# Local Development Override
+# =============================================================================
+# Auto-merged on `docker compose up` (without -f). Bypasses Traefik and the
+# backup service, exposes Strapi directly on :1337.
+#
+# Production: docker compose -f docker-compose.yml up -d --build
+# =============================================================================
+
+services:
+  # Traefik only runs under the "production" profile
+  traefik:
+    profiles:
+      - production
+
+  # Backup service only runs under the "production" profile
+  postgres-backup:
+    profiles:
+      - production
+
+  strapi:
+    ports:
+      - "${PORT:-1337}:1337"
+    labels: []
+    environment:
+      # No reverse proxy in local dev
+      IS_PROXIED: "false"

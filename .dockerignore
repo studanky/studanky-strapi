@@ -1,0 +1,29 @@
+# Dependencies & build artifacts (rebuilt inside the image)
+node_modules
+dist
+build
+.cache
+.strapi
+
+# Local runtime data — never bake into the image
+.tmp
+.env
+.env.*
+!.env.example
+public/uploads/*
+!public/uploads/.gitkeep
+
+# Deployment / docs / VCS
+docs
+.git
+.gitignore
+Dockerfile
+docker-compose*.yml
+.dockerignore
+
+# Tooling & misc
+.vscode
+.idea
+coverage
+*.log
+.DS_Store

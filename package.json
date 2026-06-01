@@ -19,8 +19,11 @@
   "dependencies": {
     "@strapi/plugin-cloud": "5.46.0",
     "@strapi/plugin-users-permissions": "5.46.0",
+    "@strapi/provider-email-nodemailer": "5.46.0",
+    "@strapi/provider-upload-aws-s3": "5.46.0",
     "@strapi/strapi": "5.46.0",
     "better-sqlite3": "11.3.0",
+    "pg": "8.13.1",
     "qrcode": "^1.5.4",
     "react": "^18.0.0",
     "react-dom": "^18.0.0",

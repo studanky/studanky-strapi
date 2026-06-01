@@ -88,10 +88,131 @@ Custom backend logic is documented in [`docs/`](./docs/):
 | `ENCRYPTION_KEY` | Key for data encryption |
 | `CRON_ENABLED` | Enable scheduled tasks incl. ČHMÚ sync (default `true`) |
 | `HMAC_SECRET` | *(Phase 2)* shared secret for report-submit auth — unused in MVP |
+| `IS_PROXIED` | Trust `X-Forwarded-*` behind Traefik (default `true`; set `false` for direct access) |
+| `DOMAIN` / `PUBLIC_URL` | Public domain / explicit public URL for absolute links (QR, emails) |
+| `CORS_ORIGINS` | Comma-separated allowed origins (default `*` — **restrict in production**) |
+| `DATABASE_*` | Postgres connection (compose forces `DATABASE_CLIENT=postgres`) |
+| `SMTP_*` / `DEFAULT_FROM_EMAIL` | Optional SMTP (nodemailer); auth attached only when enabled |
+| `AWS_BUCKET` + `AWS_*` / `UPLOAD_CDN_*` | Optional S3/R2 upload offload (empty = local volume) |
+| `COMPOSE_PROJECT_NAME` | Volume/container namespace per host (default `studanky`) |
+| `ACME_EMAIL` | Email for Let's Encrypt registration |
+| `BACKUP_*` | Backup cron schedules + retention (production only) |
 
 ## ⚙️ Deployment
 
-See the [Strapi deployment documentation](https://docs.strapi.io/dev-docs/deployment) for deployment options.
+Production runs as a **single-node Docker Compose stack** on an Ubuntu 24.04
+server: **Traefik** (auto HTTPS via Let's Encrypt) → **Strapi** → **PostgreSQL**
+(WAL archiving) plus a **backup** container (pg_dump + pg_basebackup + WAL +
+uploads). Target: low-traffic, read-heavy public API + admin for spring owners.
+
+> ⚠️ **Do not scale `strapi` beyond 1 replica.** The ČHMÚ sync cron runs
+> in-process; multiple replicas would fire it N× (duplicate reports, N× load on
+> ČHMÚ). Scale vertically instead.
+
+### Architecture
+
+```text
+        Internet :80/:443
+              │
+         ┌────▼─────┐  traefik  — TLS termination + HTTP→HTTPS redirect
+         └────┬─────┘
+              │  (docker network: studanky-network)
+         ┌────▼─────┐  studanky-app  — Strapi :1337 (non-root, healthcheck)
+         └────┬─────┘
+         ┌────▼─────┐      ┌──────────────────┐
+         │ postgres │◄─────│ studanky-backup  │ cron: dump+base+WAL+uploads
+         │ + WAL    │      └──────────────────┘
+         └──────────┘
+```
+
+### Prerequisites (Ubuntu 24.04)
+
+```bash
+# Docker Engine + Compose v2 plugin
+sudo apt-get update
+sudo apt-get install -y ca-certificates curl
+sudo install -m 0755 -d /etc/apt/keyrings
+sudo curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+sudo chmod a+r /etc/apt/keyrings/docker.asc
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] \
+  https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo $VERSION_CODENAME) stable" \
+  | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+sudo apt-get update
+sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+
+docker compose version   # verify the v2 plugin
+```
+
+Point your DNS **A record** for `DOMAIN` at the server's public IP, and open
+ports **80** and **443** in the firewall (`sudo ufw allow 80,443/tcp`).
+
+### First deploy
+
+```bash
+# On the server, in the project root:
+cp .env.example .env
+
+# Generate each secret (run 6× for APP_KEYS×2 + the others):
+node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"
+
+# Edit .env — required: DOMAIN, ACME_EMAIL, DATABASE_PASSWORD, all secrets,
+# HMAC_SECRET; set CORS_ORIGINS to the app/admin domains; COMPOSE_PROJECT_NAME.
+
+# Build and start the full production stack:
+docker compose -f docker-compose.yml up -d --build
+
+# Watch startup (first run also provisions the TLS certificate):
+docker compose -f docker-compose.yml logs -f strapi traefik
+```
+
+Create the first admin at `https://<DOMAIN>/admin`.
+
+### Updates / redeploy
+
+```bash
+git pull
+docker compose -f docker-compose.yml up -d --build
+docker image prune -f          # optional: reclaim old layers
+```
+
+### Local Docker run (optional)
+
+`docker compose up` (without `-f`) merges `docker-compose.override.yml`, which
+drops Traefik + backup and exposes Strapi directly on `:1337`. For plain
+non-Docker dev use `npm run dev` (SQLite).
+
+### Media uploads
+
+By default uploads live in the `*_uploads` volume and are archived by the backup
+container. To offload to **S3 / Cloudflare R2** (recommended once owners upload
+photos), set `AWS_BUCKET` + credentials in `.env` (for R2 also `AWS_ENDPOINT` +
+`AWS_FORCE_PATH_STYLE=true`) and set `UPLOAD_CDN_HOST` so the admin can preview
+media (CSP).
+
+### Backups & restore
+
+Schedules (defaults): logical dump **02:30**, base + uploads + cleanup **03:00**,
+retention **7 days** — all before the **03:30** ČHMÚ sync.
+
+```bash
+# Run a full backup now / list backups
+docker exec studanky-backup /scripts/pg-backup.sh all
+docker exec studanky-backup /scripts/pg-backup.sh list
+
+# Restore the latest logical dump (destructive — asks for confirmation)
+docker exec -it studanky-backup /scripts/pg-restore.sh dump latest
+docker restart studanky-app      # reconnect Strapi after a DB restore
+
+# Restore uploads / Point-in-Time Recovery guide
+docker exec -it studanky-backup /scripts/pg-restore.sh uploads latest
+docker exec studanky-backup /scripts/pg-restore.sh pitr-info
+```
+
+> ⚠️ **Backups are on the same host as the DB.** Add an off-site copy
+> (e.g. `restic`/`rclone` of the `*_backups` volume to S3/R2) — the report
+> history is the project's core asset.
+
+For deeper background see the [Strapi deployment docs](https://docs.strapi.io/dev-docs/deployment).
 
 ## 📚 Learn More
 

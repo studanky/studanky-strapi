@@ -1,0 +1,200 @@
+# =============================================================================
+# Studánky Strapi — Production Docker Compose
+# =============================================================================
+# Usage:
+#   Production: docker compose -f docker-compose.yml up -d --build
+#   Local dev:  docker compose up -d --build   (merges docker-compose.override.yml)
+#
+# NOTE: Do NOT scale the `strapi` service beyond 1 replica — the ČHMÚ sync cron
+# runs in-process and would fire N× (duplicate reports, N× load on ČHMÚ).
+# =============================================================================
+
+services:
+  # ---------------------------------------------------------------------------
+  # Traefik — reverse proxy with automatic Let's Encrypt SSL
+  # (One Traefik per host. If another project already runs Traefik on :80/:443,
+  #  share it instead of starting a second instance.)
+  # ---------------------------------------------------------------------------
+  traefik:
+    image: traefik:v3.6
+    container_name: traefik
+    restart: unless-stopped
+    command:
+      - "--providers.docker=true"
+      - "--providers.docker.exposedbydefault=false"
+      - "--entrypoints.web.address=:80"
+      - "--entrypoints.websecure.address=:443"
+      - "--entrypoints.web.http.redirections.entrypoint.to=websecure"
+      - "--entrypoints.web.http.redirections.entrypoint.scheme=https"
+      - "--certificatesresolvers.letsencrypt.acme.email=${ACME_EMAIL}"
+      - "--certificatesresolvers.letsencrypt.acme.storage=/letsencrypt/acme.json"
+      - "--certificatesresolvers.letsencrypt.acme.httpchallenge.entrypoint=web"
+      - "--ping=true"
+      - "--log.level=INFO"
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - traefik_certs:/letsencrypt
+    networks:
+      - studanky-network
+    healthcheck:
+      test: [ "CMD", "traefik", "healthcheck", "--ping" ]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  # ---------------------------------------------------------------------------
+  # PostgreSQL database (WAL archiving enabled for PITR)
+  # ---------------------------------------------------------------------------
+  postgres:
+    image: postgres:16-alpine
+    container_name: studanky-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${DATABASE_NAME:-studanky}
+      POSTGRES_USER: ${DATABASE_USERNAME:-studanky}
+      POSTGRES_PASSWORD: ${DATABASE_PASSWORD:?DATABASE_PASSWORD is required}
+    command:
+      - "postgres"
+      - "-c"
+      - "wal_level=replica"
+      - "-c"
+      - "archive_mode=on"
+      - "-c"
+      - "archive_command=test ! -f /var/lib/postgresql/wal_archive/%f && cp %p /var/lib/postgresql/wal_archive/%f"
+      - "-c"
+      - "max_wal_senders=3"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - postgres_wal_archive:/var/lib/postgresql/wal_archive
+      - ./scripts/backup/init-postgres.sh:/usr/local/bin/init-postgres.sh:ro
+    entrypoint: [ "/usr/local/bin/init-postgres.sh" ]
+    networks:
+      - studanky-network
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U ${DATABASE_USERNAME:-studanky} -d ${DATABASE_NAME:-studanky}" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  # ---------------------------------------------------------------------------
+  # Strapi application
+  # ---------------------------------------------------------------------------
+  strapi:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: studanky-app
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      # Server
+      NODE_ENV: production
+      DOMAIN: ${DOMAIN:-}
+      PUBLIC_URL: ${PUBLIC_URL:-}
+      HOST: ${HOST:-0.0.0.0}
+      PORT: ${PORT:-1337}
+      IS_PROXIED: ${IS_PROXIED:-true}
+      CRON_ENABLED: ${CRON_ENABLED:-true}
+      CORS_ORIGINS: ${CORS_ORIGINS:-*}
+      # Secrets (required — compose refuses to start if missing)
+      APP_KEYS: ${APP_KEYS:?APP_KEYS is required}
+      API_TOKEN_SALT: ${API_TOKEN_SALT:?API_TOKEN_SALT is required}
+      ADMIN_JWT_SECRET: ${ADMIN_JWT_SECRET:?ADMIN_JWT_SECRET is required}
+      TRANSFER_TOKEN_SALT: ${TRANSFER_TOKEN_SALT:?TRANSFER_TOKEN_SALT is required}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:?ENCRYPTION_KEY is required}
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
+      # App-specific (QR/report HMAC)
+      HMAC_SECRET: ${HMAC_SECRET:-}
+      # Database
+      DATABASE_CLIENT: postgres
+      DATABASE_HOST: postgres
+      DATABASE_PORT: 5432
+      DATABASE_NAME: ${DATABASE_NAME:-studanky}
+      DATABASE_USERNAME: ${DATABASE_USERNAME:-studanky}
+      DATABASE_PASSWORD: ${DATABASE_PASSWORD:?DATABASE_PASSWORD is required}
+      DATABASE_SSL: ${DATABASE_SSL:-false}
+      # Email (optional / prepared)
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_SECURE: ${SMTP_SECURE:-false}
+      SMTP_REQUIRE_TLS: ${SMTP_REQUIRE_TLS:-false}
+      SMTP_TLS_REJECT_UNAUTHORIZED: ${SMTP_TLS_REJECT_UNAUTHORIZED:-true}
+      SMTP_AUTH_ENABLED: ${SMTP_AUTH_ENABLED:-}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASS: ${SMTP_PASS:-}
+      DEFAULT_FROM_EMAIL: ${DEFAULT_FROM_EMAIL:-}
+      DEFAULT_REPLY_TO_EMAIL: ${DEFAULT_REPLY_TO_EMAIL:-}
+      # Object storage (optional — set AWS_BUCKET to switch uploads to S3/R2)
+      AWS_BUCKET: ${AWS_BUCKET:-}
+      AWS_REGION: ${AWS_REGION:-}
+      AWS_ENDPOINT: ${AWS_ENDPOINT:-}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_ACCESS_SECRET: ${AWS_ACCESS_SECRET:-}
+      AWS_ROOT_PATH: ${AWS_ROOT_PATH:-}
+      AWS_FORCE_PATH_STYLE: ${AWS_FORCE_PATH_STYLE:-false}
+      UPLOAD_CDN_URL: ${UPLOAD_CDN_URL:-}
+      UPLOAD_CDN_HOST: ${UPLOAD_CDN_HOST:-}
+    volumes:
+      - strapi_uploads:/app/public/uploads
+    networks:
+      - studanky-network
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.studanky.rule=Host(`${DOMAIN}`)"
+      - "traefik.http.routers.studanky.entrypoints=websecure"
+      - "traefik.http.routers.studanky.tls.certresolver=letsencrypt"
+      - "traefik.http.services.studanky.loadbalancer.server.port=1337"
+
+  # ---------------------------------------------------------------------------
+  # Backup service — pg_dump + pg_basebackup + WAL + uploads archive
+  # ---------------------------------------------------------------------------
+  postgres-backup:
+    image: postgres:16-alpine
+    container_name: studanky-backup
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_HOST: postgres
+      DATABASE_PORT: 5432
+      DATABASE_NAME: ${DATABASE_NAME:-studanky}
+      DATABASE_USERNAME: ${DATABASE_USERNAME:-studanky}
+      DATABASE_PASSWORD: ${DATABASE_PASSWORD:?DATABASE_PASSWORD is required}
+      PGPASSWORD: ${DATABASE_PASSWORD:?DATABASE_PASSWORD is required}
+      BACKUP_RETENTION_DAYS: ${BACKUP_RETENTION_DAYS:-7}
+      BACKUP_SCHEDULE_BASE: ${BACKUP_SCHEDULE_BASE:-0 3 * * *}
+      BACKUP_SCHEDULE_DUMP: ${BACKUP_SCHEDULE_DUMP:-30 2 * * *}
+      BACKUP_ON_STARTUP: ${BACKUP_ON_STARTUP:-false}
+    volumes:
+      - postgres_backups:/backups
+      - postgres_wal_archive:/wal_archive:ro
+      # Local uploads (read-only) so they can be archived alongside the DB.
+      # Harmless/empty when uploads are offloaded to S3/R2.
+      - strapi_uploads:/uploads:ro
+      - ./scripts/backup:/scripts:ro
+    networks:
+      - studanky-network
+    entrypoint: [ "/scripts/entrypoint-backup.sh" ]
+
+networks:
+  studanky-network:
+    driver: bridge
+
+volumes:
+  postgres_data:
+    name: ${COMPOSE_PROJECT_NAME:-studanky}_postgres_data
+  postgres_wal_archive:
+    name: ${COMPOSE_PROJECT_NAME:-studanky}_wal_archive
+  postgres_backups:
+    name: ${COMPOSE_PROJECT_NAME:-studanky}_backups
+  strapi_uploads:
+    name: ${COMPOSE_PROJECT_NAME:-studanky}_uploads
+  traefik_certs:
+    name: ${COMPOSE_PROJECT_NAME:-studanky}_certs
