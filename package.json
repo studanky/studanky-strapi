@@ -1,6 +1,6 @@
 {
   "name": "studanky-strapi",
-  "version": "1.0.4",
+  "version": "1.0.5",
   "private": true,
   "description": "A Strapi application",
   "scripts": {
