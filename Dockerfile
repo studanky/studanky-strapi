@@ -37,7 +37,8 @@ RUN npm run build && npm prune --omit=dev
 # is set above. The final require() runs on the build host (same CPU as runtime),
 # so the build FAILS loudly here if sharp still cannot load.
 RUN rm -rf node_modules/@img/sharp-* \
- && npm install --no-save --omit=optional sharp \
+ && npm install --no-save --no-package-lock --omit=optional \
+      sharp node-addon-api node-gyp \
  && node -e "require('sharp'); console.log('sharp loads OK on this CPU')"
 
 # =============================================================================
