@@ -167,6 +167,50 @@ docker compose -f docker-compose.yml logs -f strapi traefik
 
 Create the first admin at `https://<DOMAIN>/admin`.
 
+### Behind an existing reverse proxy (shared host)
+
+If the server already runs a reverse proxy on `:80`/`:443` (e.g. a host-level
+**nginx** shared with another site), do **not** start the bundled Traefik — two
+proxies cannot bind the same ports. Use the
+[`docker-compose.host-nginx.yml`](./docker-compose.host-nginx.yml) override: it
+disables Traefik and publishes Strapi on `127.0.0.1:1337` only, so the host
+proxy reverse-proxies to it and terminates TLS (e.g. certbot).
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.host-nginx.yml up -d --build
+```
+
+Then add a vhost on the host nginx (`/etc/nginx/sites-available/studanky`):
+
+```nginx
+server {
+    server_name studanky.example.com;
+    client_max_body_size 50M;                 # media uploads via admin
+    location / {
+        proxy_pass http://127.0.0.1:1337;
+        proxy_http_version 1.1;
+        proxy_set_header Host              $host;
+        proxy_set_header X-Real-IP         $remote_addr;
+        proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;   # IS_PROXIED=true trusts this
+        proxy_set_header Upgrade           $http_upgrade;
+        proxy_set_header Connection        "upgrade";
+        proxy_read_timeout 120s;
+    }
+    listen 80;
+}
+```
+
+```bash
+sudo ln -s /etc/nginx/sites-available/studanky /etc/nginx/sites-enabled/studanky
+sudo nginx -t && sudo systemctl reload nginx
+sudo certbot --nginx -d studanky.example.com   # adds listen 443 + HTTP→HTTPS redirect
+```
+
+Keep `IS_PROXIED=true` (Strapi trusts `X-Forwarded-Proto` for absolute URLs) and
+set `CORS_ORIGINS` to the real domain (never `*`). Every redeploy must pass both
+`-f` flags, otherwise the base file would start Traefik.
+
 ### Updates / redeploy
 
 ```bash

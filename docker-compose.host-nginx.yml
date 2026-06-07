@@ -1,0 +1,26 @@
+# =============================================================================
+# Studánky — override for hosts that already run nginx on :80/:443
+# =============================================================================
+# Use this when the server already terminates TLS with a host-level nginx
+# (e.g. shared with a WordPress eshop). Traefik is disabled and Strapi is
+# published on the loopback interface ONLY, so the host nginx reverse-proxies
+# to it and certbot handles the certificate (same as the other vhosts).
+#
+# Deploy:
+#   docker compose -f docker-compose.yml -f docker-compose.host-nginx.yml up -d --build
+#
+# Strapi must stay reachable on 127.0.0.1:1337 only — never bind 0.0.0.0 here,
+# that would expose Strapi to the internet, bypassing nginx + TLS.
+# =============================================================================
+
+services:
+  # Host nginx is the reverse proxy — Traefik must never start on this host.
+  traefik:
+    profiles: ["disabled"]
+
+  strapi:
+    # Loopback-only publish: host nginx proxies to it, the internet cannot.
+    ports:
+      - "127.0.0.1:1337:1337"
+    # Drop the Traefik routing labels (unused without Traefik).
+    labels: []
