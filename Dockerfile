@@ -31,13 +31,14 @@ COPY . .
 RUN npm run build && npm prune --omit=dev
 
 # Force sharp from source (lucinka-old-cpu): the prebuilt @img binaries assume
-# SSE4.2. Remove them and reinstall sharp with --omit=optional (so npm cannot
-# re-add the prebuilts), which makes sharp compile its own binding from source
-# against the system libvips (runtime CPU dispatch). SHARP_FORCE_GLOBAL_LIBVIPS
-# is set above. The final require() runs on the build host (same CPU as runtime),
-# so the build FAILS loudly here if sharp still cannot load.
-RUN rm -rf node_modules/@img/sharp-* \
- && npm install --no-save --omit=optional sharp \
+# SSE4.2; remove them so sharp's loader uses a from-source build linked against
+# the system libvips. The final `node -e require('sharp')` runs on the build
+# host (same CPU as runtime), so the build FAILS loudly here if it still SIGILLs.
+RUN rm -rf node_modules/@img/sharp-linuxmusl-x64 \
+           node_modules/@img/sharp-libvips-linuxmusl-x64 \
+           node_modules/@img/sharp-linux-x64 \
+           node_modules/@img/sharp-libvips-linux-x64 \
+ && npm rebuild sharp \
  && node -e "require('sharp'); console.log('sharp loads OK on this CPU')"
 
 # =============================================================================
