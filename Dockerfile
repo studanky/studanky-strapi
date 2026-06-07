@@ -8,15 +8,14 @@ FROM node:22-alpine AS builder
 # TODO(lucinka-old-cpu): Server-specific workaround — REMOVE once Strapi runs on
 # a CPU with x86-64-v2 (SSE4.2/POPCNT). The current host (Intel Xeon X5355, 2007)
 # lacks those, so sharp's bundled prebuilt libvips SIGILLs at runtime. We instead
-# compile sharp from source against the system libvips (apk `vips`), which does
-# runtime CPU feature dispatch and falls back safely — at the cost of a slower
-# build. To revert on modern hardware: drop `pkgconf`/`python3` below, delete the
-# `SHARP_FORCE_GLOBAL_LIBVIPS` line and the "Force sharp from source" RUN step.
+# compile sharp against the system libvips (apk `vips`), which does runtime CPU
+# feature dispatch and falls back safely — at the cost of a slower from-source
+# build. To revert on modern hardware: drop the `pkgconf` pkg below, delete the
+# `SHARP_FORCE_GLOBAL_LIBVIPS` line, and let `npm ci` use sharp's prebuilt binary.
 # Verify the CPU first: `grep -o 'sse4_2' /proc/cpuinfo` (empty = keep this).
 
-# Build dependencies for native modules (sharp/vips for images, better-sqlite3).
-# python3 is required by node-gyp to compile sharp from source.
-RUN apk add --no-cache build-base gcc autoconf automake zlib-dev libpng-dev vips-dev pkgconf python3
+# Build dependencies for native modules (sharp/vips for images, better-sqlite3)
+RUN apk add --no-cache build-base gcc autoconf automake zlib-dev libpng-dev vips-dev pkgconf
 
 WORKDIR /app
 
@@ -29,17 +28,6 @@ RUN npm ci
 # Build admin panel + compile TypeScript, then drop dev dependencies
 COPY . .
 RUN npm run build && npm prune --omit=dev
-
-# Force sharp from source (lucinka-old-cpu): the prebuilt @img binaries assume
-# SSE4.2; remove them so sharp's loader uses a from-source build linked against
-# the system libvips. The final `node -e require('sharp')` runs on the build
-# host (same CPU as runtime), so the build FAILS loudly here if it still SIGILLs.
-RUN rm -rf node_modules/@img/sharp-linuxmusl-x64 \
-           node_modules/@img/sharp-libvips-linuxmusl-x64 \
-           node_modules/@img/sharp-linux-x64 \
-           node_modules/@img/sharp-libvips-linux-x64 \
- && npm rebuild sharp \
- && node -e "require('sharp'); console.log('sharp loads OK on this CPU')"
 
 # =============================================================================
 # Stage 2: Production
