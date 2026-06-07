@@ -62,6 +62,7 @@ Custom backend logic is documented in [`docs/`](./docs/):
 
 | Document | Description |
 |----------|-------------|
+| [API Reference](./docs/api-reference.md) | **Mobile client contract** — every endpoint the app consumes (map, detail, history, config) |
 | [ČHMÚ Sync](./docs/chmu-sync.md) | Source adapter, sync service, cron, manual endpoint |
 | [Public API](./docs/public-api.md) | Custom endpoints: map (bbox) + report history |
 | [Denormalization](./docs/denormalization.md) | `refreshLatest`, cached status, flow scale |
