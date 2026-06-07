@@ -109,6 +109,11 @@ uploads). Target: low-traffic, read-heavy public API + admin for spring owners.
 > ⚠️ **Do not scale `strapi` beyond 1 replica.** The ČHMÚ sync cron runs
 > in-process; multiple replicas would fire it N× (duplicate reports, N× load on
 > ČHMÚ). Scale vertically instead.
+>
+> 🪄 **Deploying with Coolify instead?** See
+> [`docs/coolify-deploy.md`](./docs/coolify-deploy.md) for the Coolify-native
+> model (Dockerfile app + managed Postgres + S3/R2 uploads). The same repo and
+> `Dockerfile` drive both; no code changes required.
 
 ### Architecture
 
