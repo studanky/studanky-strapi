@@ -5,10 +5,21 @@
 # =============================================================================
 FROM node:22-alpine AS builder
 
+# TODO(lucinka-old-cpu): Server-specific workaround — REMOVE once Strapi runs on
+# a CPU with x86-64-v2 (SSE4.2/POPCNT). The current host (Intel Xeon X5355, 2007)
+# lacks those, so sharp's bundled prebuilt libvips SIGILLs at runtime. We instead
+# compile sharp against the system libvips (apk `vips`), which does runtime CPU
+# feature dispatch and falls back safely — at the cost of a slower from-source
+# build. To revert on modern hardware: drop the `pkgconf` pkg below, delete the
+# `SHARP_FORCE_GLOBAL_LIBVIPS` line, and let `npm ci` use sharp's prebuilt binary.
+# Verify the CPU first: `grep -o 'sse4_2' /proc/cpuinfo` (empty = keep this).
+
 # Build dependencies for native modules (sharp/vips for images, better-sqlite3)
-RUN apk add --no-cache build-base gcc autoconf automake zlib-dev libpng-dev vips-dev
+RUN apk add --no-cache build-base gcc autoconf automake zlib-dev libpng-dev vips-dev pkgconf
 
 WORKDIR /app
+
+ENV SHARP_FORCE_GLOBAL_LIBVIPS=1
 
 # Install dependencies (cached unless package files change)
 COPY package*.json ./
