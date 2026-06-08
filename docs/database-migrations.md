@@ -1,11 +1,15 @@
 # Database Indexes & Migrations
 
-Indexes that the Content-Type Builder cannot express are created by a portable
-knex migration in `database/migrations/`. Strapi runs pending migrations on boot
-and records them in `strapi_migrations`. The migration uses the knex schema
-builder so it works across the supported dialects (sqlite / mysql / postgres).
+Indexes that the Content-Type Builder cannot express are created idempotently
+during Strapi bootstrap, after Strapi has synchronized the content-type schema.
+This matters for fresh databases: Strapi runs `database/migrations/` before the
+`springs` / `reports` tables exist, so index creation cannot safely live only in
+a migration file.
 
-**File:** `database/migrations/2026.05.31T00.00.00.spring-report-indexes.js`
+**Runtime hook:** `src/index.ts` → `ensureDbIndexes()`
+
+**Compatibility migration:** `database/migrations/2026.05.31T00.00.00.spring-report-indexes.js`
+is kept as a safe no-op for migration-history stability.
 
 | Table | Index | Type | Purpose |
 |---|---|---|---|

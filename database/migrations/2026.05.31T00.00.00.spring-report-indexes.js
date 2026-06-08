@@ -21,39 +21,17 @@
  * reports (client_report_id) is safe as UNIQUE because Report has D&P disabled
  * (one row per document); multiple NULLs are allowed by the index.
  *
- * Strapi runs this once and records it in `strapi_migrations`.
+ * Compatibility note:
+ * Strapi runs database migrations before it creates content-type tables on a
+ * fresh database. Creating these indexes here breaks first boot because
+ * `springs` / `reports` do not exist yet. The indexes are now created
+ * idempotently from `src/index.ts` bootstrap, after Strapi's schema sync.
+ * This migration stays as a safe no-op so older databases that already saw this
+ * filename keep a stable migration history.
  */
 
-const SPRINGS_EXT_IDX = "springs_external_source_external_id_idx";
-const SPRINGS_LATLNG_IDX = "springs_lat_lng_idx";
-const SPRINGS_STATUS_IDX = "springs_status_updated_at_idx";
-const REPORTS_CRID_UQ = "reports_client_report_id_uq";
-const REPORTS_REPORTED_IDX = "reports_reported_at_idx";
-
 module.exports = {
-  async up(knex) {
-    await knex.schema.alterTable("springs", (t) => {
-      t.index(["external_source", "external_id"], SPRINGS_EXT_IDX);
-      t.index(["lat", "lng"], SPRINGS_LATLNG_IDX);
-      t.index(["status_updated_at"], SPRINGS_STATUS_IDX);
-    });
+  async up() {},
 
-    await knex.schema.alterTable("reports", (t) => {
-      t.unique(["client_report_id"], { indexName: REPORTS_CRID_UQ });
-      t.index(["reported_at"], REPORTS_REPORTED_IDX);
-    });
-  },
-
-  async down(knex) {
-    await knex.schema.alterTable("springs", (t) => {
-      t.dropIndex(["external_source", "external_id"], SPRINGS_EXT_IDX);
-      t.dropIndex(["lat", "lng"], SPRINGS_LATLNG_IDX);
-      t.dropIndex(["status_updated_at"], SPRINGS_STATUS_IDX);
-    });
-
-    await knex.schema.alterTable("reports", (t) => {
-      t.dropUnique(["client_report_id"], REPORTS_CRID_UQ);
-      t.dropIndex(["reported_at"], REPORTS_REPORTED_IDX);
-    });
-  },
+  async down() {},
 };

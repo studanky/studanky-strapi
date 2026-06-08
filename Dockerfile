@@ -23,8 +23,8 @@ RUN npm run build && npm prune --omit=dev
 # =============================================================================
 FROM node:22-alpine AS production
 
-# Runtime image processing only — no build toolchain
-RUN apk add --no-cache vips
+# Runtime image processing and Coolify healthcheck support — no build toolchain
+RUN apk add --no-cache vips curl
 
 ENV NODE_ENV=production \
     STRAPI_TELEMETRY_DISABLED=true \

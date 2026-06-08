@@ -93,13 +93,14 @@ In the PostgreSQL resource:
 1. Open **Backups**.
 2. Create a scheduled backup.
 3. Database list: `studanky`.
-4. Schedule: `30 2 * * *`.
+4. Schedule: `30 0 * * *`.
 5. Retention: `7` days, or your chosen value.
 6. Storage: local Coolify/server storage. Do not configure S3/R2 for this phase.
 7. Run **Backup now** once and verify that the backup succeeds.
 
-This runs before the ČHMÚ sync at `03:30 Europe/Prague`, so a clean backup exists
-before nightly data changes.
+Coolify schedules are commonly evaluated in UTC. `30 0 * * *` means `02:30`
+in Czech summer time and `01:30` in Czech winter time, so a clean backup exists
+before the ČHMÚ sync at `03:30 Europe/Prague`.
 
 Coolify PostgreSQL backups are logical `pg_dump` backups in custom format. For
 restore, use the PostgreSQL resource's **Import Backups** section; Coolify's
