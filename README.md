@@ -68,6 +68,7 @@ Custom backend logic is documented in [`docs/`](./docs/):
 | [Denormalization](./docs/denormalization.md) | `refreshLatest`, cached status, flow scale |
 | [Database & Migrations](./docs/database-migrations.md) | Indexes + why pairing is non-unique |
 | [Admin Filtering](./docs/admin-filtering.md) | Manager-based access control for Springs |
+| [Coolify Deployment](./docs/coolify-deploy.md) | Coolify 4.1.2 native deployment: Dockerfile app + managed PostgreSQL |
 | [Lifecycle Hooks](./docs/lifecycle-hooks.md) | QR code generation (denorm moved to a service) |
 | [API Security](./docs/api-security.md) | MVP public surface + Phase 2 submit-security plan |
 | [Flutter Integration](./docs/flutter-integration.md) | Client submit contract (Phase 2, planned) |
@@ -92,7 +93,7 @@ Custom backend logic is documented in [`docs/`](./docs/):
 | `IS_PROXIED` | Trust `X-Forwarded-*` behind Traefik (default `true`; set `false` for direct access) |
 | `DOMAIN` / `PUBLIC_URL` | Public domain / explicit public URL for absolute links (QR, emails) |
 | `CORS_ORIGINS` | Comma-separated allowed origins (default `*` — **restrict in production**) |
-| `DATABASE_*` | Postgres connection (compose forces `DATABASE_CLIENT=postgres`) |
+| `DATABASE_*` | Postgres connection + pool settings (compose forces `DATABASE_CLIENT=postgres`) |
 | `SMTP_*` / `DEFAULT_FROM_EMAIL` | Optional SMTP (nodemailer); auth attached only when enabled |
 | `AWS_BUCKET` + `AWS_*` / `UPLOAD_CDN_*` | Optional S3/R2 upload offload (empty = local volume) |
 | `COMPOSE_PROJECT_NAME` | Volume/container namespace per host (default `studanky`) |
@@ -110,10 +111,9 @@ uploads). Target: low-traffic, read-heavy public API + admin for spring owners.
 > in-process; multiple replicas would fire it N× (duplicate reports, N× load on
 > ČHMÚ). Scale vertically instead.
 >
-> 🪄 **Deploying with Coolify instead?** See
-> [`docs/coolify-deploy.md`](./docs/coolify-deploy.md) for the Coolify-native
-> model (Dockerfile app + managed Postgres + S3/R2 uploads). The same repo and
-> `Dockerfile` drive both; no code changes required.
+> Deploying with **Coolify 4.1.2** instead? Use the Coolify-native guide in
+> [`docs/coolify-deploy.md`](./docs/coolify-deploy.md). It keeps this VM Compose
+> deployment intact and uses the same `Dockerfile` for the Coolify application.
 
 ### Architecture
 

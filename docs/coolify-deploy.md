@@ -1,185 +1,322 @@
 # Coolify Deployment
 
-Alternative production deployment on **Coolify 4.1.2**, using the *Coolify-native*
-model: a **Dockerfile application** + a **Coolify-managed PostgreSQL** resource,
-with TLS terminated by Coolify's built-in proxy and uploads offloaded to S3/R2.
+Alternative production deployment for **Coolify 4.1.2** using the Coolify-native
+model:
 
-This is independent of the [Docker Compose / VM deployment](../README.md#️-deployment) —
-the same repo and the same [`Dockerfile`](../Dockerfile) drive both. **No code or
-config changes are required**; everything below is Coolify-side configuration.
+- **Application** built from the existing root [`Dockerfile`](../Dockerfile)
+- **Coolify-managed PostgreSQL**
+- **Coolify proxy** for TLS and routing
+- **Coolify local database backups**
+- **Coolify persistent storage** for local Strapi uploads
 
-> ⚠️ **The ČHMÚ sync cron runs in-process.** Keep **1 replica** and **disable
-> rolling updates** (see [Single-replica cron](#single-replica-cron)). Multiple
-> concurrent containers would each fire the 03:30 sync.
+The existing [Docker Compose / VM deployment](../README.md#deployment) remains
+unchanged. Do not deploy the root `docker-compose.yml` in Coolify; it contains a
+bundled Traefik service, explicit host ports and a custom network that are meant
+for a standalone Linux VM, not for Coolify's managed proxy/network model.
 
-## Why this model
+Relevant upstream docs:
 
-| Concern | Coolify-native choice | Effect |
-|---|---|---|
-| App | Dockerfile build pack from Git | reuses the existing multi-stage image as-is |
-| Database | Coolify-managed PostgreSQL 16 | lifecycle, internal networking, scheduled backups in the UI |
-| TLS / routing | Coolify built-in proxy (Traefik) + Let's Encrypt | automatic cert per FQDN, no manual labels/ports |
-| Backups | Coolify scheduled DB backups → S3/R2 | off-site logical `pg_dump`, retention in the UI |
-| Uploads | S3 / Cloudflare R2 (`@strapi/provider-upload-aws-s3`) | **stateless app container** — no host volume |
-
-Because uploads go to S3/R2 and data lives in the managed DB, the application
-container holds **no persistent state** — clean redeploys and trivial host
-migration.
+- [Coolify Dockerfile build pack](https://coolify.io/docs/applications/build-packs/dockerfile)
+- [Coolify PostgreSQL backups](https://coolify.io/docs/databases/backups)
+- [Coolify persistent storage](https://coolify.io/docs/knowledge-base/persistent-storage)
+- [Strapi Docker production notes](https://docs.strapi.io/cms/installation/docker)
+- [Strapi database pooling note](https://docs.strapi.io/cms/configurations/database#database-pooling-options)
 
 ## Architecture
 
 ```text
-                 Internet (:443)
-                       │  Let's Encrypt (Coolify-managed cert)
-              ┌────────▼─────────┐
-              │  Coolify proxy   │  Traefik — TLS termination + HTTP→HTTPS
-              │   (Traefik)      │  routing by FQDN, internal docker network
-              └────────┬─────────┘
-                       │  http://<app>:1337  (internal, no host port)
-              ┌────────▼─────────┐        ┌───────────────────────────┐
-              │  Strapi (App)    │───────▶│ PostgreSQL (managed res.)  │
-              │  Dockerfile pack │ internal│  Coolify backups → S3/R2   │
-              │  1 replica, cron │ hostname└───────────────────────────┘
-              └────────┬─────────┘
-                       │  uploads
-              ┌────────▼─────────┐
-              │   S3 / R2 bucket │  (off Coolify host)
-              └──────────────────┘
+Internet :443
+    |
+    v
+Coolify proxy (Traefik, managed by Coolify)
+    |
+    v
+Strapi application (Dockerfile build, :1337, 1 replica)
+    |                         |
+    v                         v
+Coolify PostgreSQL       Coolify volume /app/public/uploads
+local pg_dump backups    backed up by Kopia with the Coolify host
 ```
 
-The bundled `traefik` and `postgres-backup` services from
-[`docker-compose.yml`](../docker-compose.yml) are **not used** here — Coolify
-provides the proxy and the DB backups.
+Backups are local in Coolify in this setup. That is intentional for the current
+phase. The operational requirement is that **Kopia backs up the Coolify host data,
+including Coolify resources, database volumes, local backup files and application
+volumes**.
 
-## Prerequisites
+## Before You Start
 
-- A running, self-managed Coolify 4.1.2 instance with a destination/server.
-- DNS **A/AAAA record** for the FQDN (e.g. `studanky.smolikja.team`) pointed at the
-  Coolify server. Ports **80/443** open (Coolify's proxy handles ACME).
-- An S3-compatible bucket for uploads **and** for DB backups (Cloudflare R2, AWS
-  S3, MinIO, …) with access keys.
+Prepare these values:
 
-## 1. Project + PostgreSQL
+- Public API/admin domain, for example `studanky.example.com`
+- Coolify project and environment, for example `studanky` / `production`
+- PostgreSQL database name/user, for example `studanky` / `studanky`
+- Strong PostgreSQL password
+- Six Strapi secrets plus the app HMAC secret
+- Local backup retention, for example `7` days
 
-1. Create a **Project** `studanky` → environment `production`.
-2. `+ New Resource` → **Databases → PostgreSQL 16**. Set a strong password,
-   database `studanky`, user `studanky`.
-3. After it starts, open the DB resource and note the **internal connection
-   details** (host is the internal service name, port `5432`). These are only
-   reachable on Coolify's internal network — never expose the DB publicly.
-4. **Backups** tab on the DB resource:
-   - Schedule e.g. `0 3 * * *` (before the 03:30 sync), retention `7`.
-   - Destination = **S3** → enter the R2/S3 endpoint, bucket and keys.
-   - Run one manual backup to verify credentials.
-
-## 2. Application (Strapi)
-
-1. `+ New Resource` → **Application → Git repository** → select the repo + branch
-   (`main`).
-2. **Build Pack = Dockerfile** (Coolify auto-detects the root `Dockerfile`).
-3. **Ports Exposes = `1337`**.
-4. **Domains** → `https://studanky.smolikja.team`. Coolify generates the Traefik
-   labels and provisions the Let's Encrypt certificate automatically. Do **not**
-   add `ports:` or Traefik labels manually.
-5. **Health Check** → path `/_health`, expected status `204` (matches the
-   Dockerfile `HEALTHCHECK`).
-
-## 3. Environment variables
-
-Set these on the **application** (mark every secret as *Is Secret*). Do **not**
-wrap values in quotes — Coolify takes them literally.
+Generate each Strapi secret locally:
 
 ```bash
+node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"
+```
+
+Use two generated values for `APP_KEYS`:
+
+```text
+APP_KEYS=<key1>,<key2>
+```
+
+## 1. Create The PostgreSQL Resource
+
+1. In Coolify, open your project and production environment.
+2. Create a new resource: **Databases -> PostgreSQL**.
+3. Use PostgreSQL 16 if available.
+4. Set:
+   - Database: `studanky`
+   - User: `studanky`
+   - Password: a strong generated password
+5. Do not expose PostgreSQL publicly. Leave public port / internet access off.
+6. Start the database.
+7. Copy the internal connection details shown by Coolify:
+   - Internal host
+   - Port, normally `5432`
+   - Database
+   - Username
+   - Password
+
+The Strapi application must use the internal host, not a public database URL.
+
+## 2. Configure Local Database Backups
+
+In the PostgreSQL resource:
+
+1. Open **Backups**.
+2. Create a scheduled backup.
+3. Database list: `studanky`.
+4. Schedule: `30 2 * * *`.
+5. Retention: `7` days, or your chosen value.
+6. Storage: local Coolify/server storage. Do not configure S3/R2 for this phase.
+7. Run **Backup now** once and verify that the backup succeeds.
+
+This runs before the ČHMÚ sync at `03:30 Europe/Prague`, so a clean backup exists
+before nightly data changes.
+
+Coolify PostgreSQL backups are logical `pg_dump` backups in custom format. For
+restore, use the PostgreSQL resource's **Import Backups** section; Coolify's
+default import expects a dump created with `pg_dump -Fc`.
+
+## 3. Create The Strapi Application
+
+1. Create a new resource: **Application -> Git repository**.
+2. Select this repository and the production branch, usually `main`.
+3. Set **Build Pack** to `Dockerfile`.
+4. Base directory: `/`.
+5. Dockerfile: `Dockerfile`.
+6. Set **Port Exposes** to `1337`.
+7. Do not configure port mappings to the host.
+8. Add the domain:
+
+```text
+https://studanky.example.com
+```
+
+Replace the domain with the real production domain. DNS must already point to the
+Coolify server, and ports `80`/`443` must be reachable by Coolify's proxy.
+
+The image already contains a Docker `HEALTHCHECK` for `/_health`, expecting
+Strapi's `204` response. If you configure a Coolify UI health check as well, use:
+
+```text
+Path: /_health
+Expected status: 204
+```
+
+If Coolify shows `No available server`, first check whether the container is
+marked unhealthy and whether `Port Exposes` is still `1337`.
+
+## 4. Add Persistent Storage For Uploads
+
+Even if user uploads are not important yet, configure the volume now so future
+admin-uploaded files survive redeploys.
+
+In the Strapi application resource, add persistent storage:
+
+```text
+Type: Volume
+Name: studanky_uploads
+Destination Path: /app/public/uploads
+```
+
+Leave `AWS_BUCKET` unset/empty. With no S3 bucket configured, Strapi uses local
+uploads under `/app/public/uploads`, and this Coolify volume is what Kopia must
+back up.
+
+## 5. Add Environment Variables
+
+Open the application's **Environment Variables** tab. Developer View is the
+fastest way to paste the values.
+
+Set secret values as **Secret**. For secrets and database credentials, keep
+**Runtime Variable** enabled and disable **Build Variable**. The Docker image does
+not need database credentials or Strapi secrets during build.
+
+```env
 NODE_ENV=production
-PUBLIC_URL=https://studanky.smolikja.team
-IS_PROXIED=true
 HOST=0.0.0.0
 PORT=1337
-CRON_ENABLED=true
-CORS_ORIGINS=https://studanky.smolikja.team   # + the client's app/admin domains, comma-separated
 
-# Database — prefer the individual vars over DATABASE_URL.
-# config/database.ts always passes host:'localhost' as a default, so mixing a
-# connectionString is ambiguous and forces URL-encoding the password. Use the
-# discrete vars Coolify shows on the managed Postgres resource:
+DOMAIN=studanky.example.com
+PUBLIC_URL=https://studanky.example.com
+IS_PROXIED=true
+CRON_ENABLED=true
+CORS_ORIGINS=https://studanky.example.com
+
 DATABASE_CLIENT=postgres
 DATABASE_HOST=<coolify-internal-postgres-host>
 DATABASE_PORT=5432
 DATABASE_NAME=studanky
 DATABASE_USERNAME=studanky
-DATABASE_PASSWORD=<db-password>
-DATABASE_SSL=false                          # internal network, no TLS needed
+DATABASE_PASSWORD=<postgres-password>
+DATABASE_SSL=false
+DATABASE_POOL_MIN=0
+DATABASE_POOL_MAX=10
 
-# Secrets — generate each with:
-#   node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"
 APP_KEYS=<key1>,<key2>
 API_TOKEN_SALT=<generated>
 ADMIN_JWT_SECRET=<generated>
 TRANSFER_TOKEN_SALT=<generated>
 ENCRYPTION_KEY=<generated>
 JWT_SECRET=<generated>
-HMAC_SECRET=<generated, min 32 chars>       # QR/report signature
-
-# Uploads → S3 / Cloudflare R2
-AWS_BUCKET=studanky-media
-AWS_REGION=auto                             # R2: auto
-AWS_ENDPOINT=https://<account>.r2.cloudflarestorage.com
-AWS_ACCESS_KEY_ID=<key>
-AWS_ACCESS_SECRET=<secret>
-AWS_FORCE_PATH_STYLE=true                   # R2 / MinIO
-UPLOAD_CDN_URL=https://media.studanky.smolikja.team   # public media base URL
-UPLOAD_CDN_HOST=media.studanky.smolikja.team          # added to CSP img-src/media-src
+HMAC_SECRET=<generated-minimum-32-chars>
 ```
 
-> `UPLOAD_CDN_URL`/`UPLOAD_CDN_HOST` require the bucket to be **publicly
-> readable** (R2 public bucket or a custom domain / Worker in front). Without a
-> public media URL the admin panel cannot render image previews.
+Use individual database variables instead of `DATABASE_URL`. It avoids password
+URL-encoding problems and matches this repository's `config/database.ts`.
 
-## 4. Deploy
+Optional SMTP variables can be added later if email sending is needed:
 
-Trigger **Deploy** and watch the build + runtime logs. On first boot Strapi runs
-its migrations automatically. Then create the first admin at
-`https://studanky.smolikja.team/admin`.
+```env
+SMTP_HOST=
+SMTP_PORT=587
+SMTP_SECURE=false
+SMTP_REQUIRE_TLS=false
+SMTP_TLS_REJECT_UNAUTHORIZED=true
+SMTP_AUTH_ENABLED=
+SMTP_USER=
+SMTP_PASS=
+DEFAULT_FROM_EMAIL=noreply@example.com
+DEFAULT_REPLY_TO_EMAIL=info@example.com
+```
 
-For auto-deploy on push, enable the Git **webhook** Coolify provides for the app.
+Do not set these unless you are using S3/R2 uploads:
 
-## Single-replica cron
+```env
+AWS_BUCKET=
+AWS_REGION=
+AWS_ENDPOINT=
+AWS_ACCESS_KEY_ID=
+AWS_ACCESS_SECRET=
+AWS_ROOT_PATH=
+AWS_FORCE_PATH_STYLE=false
+UPLOAD_CDN_URL=
+UPLOAD_CDN_HOST=
+```
 
-The ČHMÚ sync (`config/cron-tasks.ts`, 03:30 Europe/Prague) runs **in-process**.
-To guarantee it fires exactly once:
+## 6. Deployment Settings
 
-- **Replicas = 1.** Never scale horizontally — scale the container's CPU/RAM
-  instead.
-- **Disable Rolling Update** (Advanced → use recreate / stop-then-start). A
-  rolling deploy briefly runs two containers, both with `CRON_ENABLED=true`. Cost
-  is ~10–30 s of downtime per deploy, acceptable for this read-heavy API.
+Set the application to a single replica.
 
-No code refactor is needed: `node-schedule` re-registers on container start, and
-`syncFromChmu()` is **idempotent** (upserts springs by `external_source` +
-`external_id`), so a missed or overlapping run is self-healing on the next night.
+The ČHMÚ sync cron runs in-process in Strapi at `03:30 Europe/Prague`. Multiple
+running application containers would each register the same cron task. Keep:
 
-## Operations
+```text
+Replicas: 1
+```
 
-- **DB backups** — managed on the PostgreSQL resource (§1). Verify they land in
-  the bucket; restore is done from the Coolify DB **Backups** tab.
-- **Uploads backups** — handled by the S3/R2 provider's own
-  versioning/lifecycle, not by Coolify. Enable bucket versioning if you want
-  point-in-time recovery for media.
-- **Logs / shell** — use the app resource's **Logs** and **Terminal** tabs
-  (e.g. `npm run strapi -- …` for one-off admin tasks).
-- **Manual ČHMÚ sync** — `POST /api/springs/sync-chmu` (see
-  [`chmu-sync.md`](./chmu-sync.md)).
+If your Coolify UI exposes rolling-update settings, disable rolling updates or
+use a stop-then-start/recreate deployment strategy for this app. If that setting
+is not available, avoid manual deployments around the `03:30` cron window.
 
-## Differences vs the Compose/VM deployment
+For a small production Strapi instance, start with at least:
 
-| | Compose / VM | Coolify-native |
+```text
+Runtime memory: 1 GB minimum, 2 GB preferred
+Build memory: 2 GB preferred
+```
+
+If Docker builds fail during `npm ci` or `npm run build`, increase available
+memory or use a separate Coolify build server.
+
+## 7. Deploy
+
+1. Click **Deploy**.
+2. Watch build logs until the Docker image is built.
+3. Watch runtime logs until Strapi starts successfully.
+4. Open:
+
+```text
+https://studanky.example.com/_health
+```
+
+Expected response: HTTP `204`.
+
+5. Open:
+
+```text
+https://studanky.example.com/admin
+```
+
+6. Create the first Strapi admin user.
+7. In the PostgreSQL resource, run a manual backup once after the first successful
+   boot.
+8. Run or verify a Kopia backup of the Coolify host.
+
+## 8. Updates
+
+For normal releases:
+
+1. Push changes to the configured branch.
+2. Trigger deployment manually or enable Coolify auto-deploy/webhook.
+3. Watch application logs after deployment.
+4. Verify `/_health` and `/admin`.
+
+Before a Strapi upgrade or database-affecting migration:
+
+1. Run a manual PostgreSQL backup in Coolify.
+2. Confirm Kopia has a recent backup of the Coolify host.
+3. Deploy.
+4. Verify logs and admin access.
+
+## 9. Restore
+
+For an application-level database restore:
+
+1. Open the PostgreSQL resource.
+2. Stop the Strapi application to avoid writes during restore.
+3. Use **Import Backups** or restore one of the local Coolify backups.
+4. Start Strapi again.
+5. Verify `/admin`, public API endpoints and recent content.
+
+For full-host recovery:
+
+1. Restore Coolify with Kopia according to your Kopia runbook.
+2. Verify Coolify resources, PostgreSQL volume, local DB backups and
+   `studanky_uploads` volume are present.
+3. Start PostgreSQL first.
+4. Start Strapi.
+5. Verify `/_health` and `/admin`.
+
+## Differences Vs VM Compose Deployment
+
+| Concern | VM Docker Compose | Coolify-native |
 |---|---|---|
-| Proxy / TLS | bundled Traefik | Coolify proxy |
-| Database | `postgres` container (WAL/PITR) | Coolify-managed PostgreSQL |
-| DB backups | `postgres-backup` container (dump + base + WAL, PITR) | Coolify scheduled `pg_dump` → S3 (no PITR) |
-| Uploads | local `*_uploads` volume | S3 / R2 (stateless app) |
-| App state | volume on host | none |
+| Proxy / TLS | Bundled Traefik in `docker-compose.yml` | Coolify proxy |
+| App build | Local `docker compose build` | Coolify Dockerfile build pack |
+| Database | Compose `postgres` service | Coolify PostgreSQL resource |
+| DB backups | Backup sidecar + WAL/PITR | Coolify local `pg_dump` backups |
+| Uploads | Compose `strapi_uploads` volume | Coolify volume `/app/public/uploads` |
+| Off-host backup | Not built in | Kopia backs up the Coolify host |
 
-If point-in-time recovery is a hard requirement, prefer the Compose deployment
-or run a dedicated managed Postgres with WAL archiving — Coolify's built-in
-backups are logical dumps only.
+The Coolify setup intentionally does not implement S3/R2 backup storage in this
+phase. If off-host backups become required later, add S3-compatible backup
+storage in Coolify and consider moving uploads to S3/R2 as well.
