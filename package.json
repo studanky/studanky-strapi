@@ -11,6 +11,7 @@
     "develop": "strapi develop",
     "start": "strapi start",
     "strapi": "strapi",
+    "sync:chmu": "node scripts/ops/sync-chmu.js",
     "test": "vitest run",
     "test:watch": "vitest",
     "upgrade": "npx @strapi/upgrade latest",

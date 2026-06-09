@@ -170,6 +170,7 @@ DOMAIN=studanky.example.com
 PUBLIC_URL=https://studanky.example.com
 IS_PROXIED=true
 CRON_ENABLED=true
+STRAPI_PLUGIN_I18N_INIT_LOCALE_CODE=cs
 CORS_ORIGINS=https://studanky.example.com
 
 DATABASE_CLIENT=postgres

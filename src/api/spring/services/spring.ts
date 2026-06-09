@@ -26,6 +26,10 @@ interface LatestReport {
   reported_at: string;
 }
 
+interface I18nLocale {
+  code: string;
+}
+
 /** Resolves the configured default locale dynamically (falls back to en). */
 async function getDefaultLocale(strapi: Core.Strapi): Promise<string> {
   try {
@@ -37,6 +41,24 @@ async function getDefaultLocale(strapi: Core.Strapi): Promise<string> {
   } catch {
     return "en";
   }
+}
+
+/** Resolves all configured locales; falls back to the default locale. */
+async function getConfiguredLocales(strapi: Core.Strapi): Promise<string[]> {
+  try {
+    const locales = (await strapi
+      .plugin("i18n")
+      .service("locales")
+      .find()) as I18nLocale[];
+    const localeCodes = locales.map((locale) => locale.code).filter(Boolean);
+    if (localeCodes.length > 0) {
+      return localeCodes;
+    }
+  } catch {
+    // Fall back below.
+  }
+
+  return [await getDefaultLocale(strapi)];
 }
 
 export default factories.createCoreService(SPRING_UID, ({ strapi }) => ({
@@ -173,8 +195,9 @@ export default factories.createCoreService(SPRING_UID, ({ strapi }) => ({
   },
 
   /**
-   * ČHMÚ sync — upserts spring stations and appends a fresh discharge report
-   * when ČHMÚ has newer data, then denormalizes via refreshLatest.
+   * ČHMÚ sync — upserts spring stations in all configured locales and appends
+   * a fresh discharge report when ČHMÚ has newer data, then denormalizes via
+   * refreshLatest.
    *
    * Source-neutral: the ČHMÚ adapter (`chmu-client`) yields neutral DTOs; this
    * method maps them onto the canonical model (external_source = 'chmu'). Each
@@ -182,20 +205,24 @@ export default factories.createCoreService(SPRING_UID, ({ strapi }) => ({
    * value downloads are concurrency-limited (~hundreds of files / night).
    */
   async syncFromChmu() {
-    const locale = await getDefaultLocale(strapi);
+    const locales = await getConfiguredLocales(strapi);
     const stations = await listSpringStations();
 
     const stats = {
       stations: stations.length,
+      locales,
       created: 0,
       updated: 0,
+      localized_created: 0,
+      localized_updated: 0,
       reports: 0,
       recent: 0, // values that came from the recent/ fallback (not now/)
       skipped: 0,
       errors: 0,
     };
 
-    // Phase A — upsert station metadata (sequential; SQLite-friendly writes).
+    // Phase A — upsert station metadata in every configured locale
+    // (sequential; SQLite-friendly writes).
     const targets: Array<{
       documentId: string;
       externalId: string;
@@ -204,50 +231,82 @@ export default factories.createCoreService(SPRING_UID, ({ strapi }) => ({
 
     for (const st of stations) {
       try {
-        const existing = (await strapi.documents(SPRING_UID).findFirst({
-          filters: { external_source: CHMU_SOURCE, external_id: st.externalId },
-          status: "draft",
-          locale,
-          fields: ["status_updated_at"],
+        const existingDocument = (await strapi.db.query(SPRING_UID).findOne({
+          where: {
+            external_source: CHMU_SOURCE,
+            external_id: st.externalId,
+            publishedAt: null,
+          },
+          select: ["documentId", "status_updated_at"],
+          orderBy: { locale: "asc" },
         })) as { documentId: string; status_updated_at: string | null } | null;
 
-        if (!existing) {
-          const created = await strapi.documents(SPRING_UID).create({
-            data: {
-              name: st.name,
-              lat: st.lat,
-              lng: st.lng,
-              external_source: CHMU_SOURCE,
-              external_id: st.externalId,
-              current_status: "unknown",
-            },
-            locale,
-          });
-          await strapi
-            .documents(SPRING_UID)
-            .publish({ documentId: created.documentId, locale });
-          stats.created++;
-          targets.push({
-            documentId: created.documentId,
-            externalId: st.externalId,
-            lastReportAt: null,
-          });
-        } else {
-          await strapi.documents(SPRING_UID).update({
-            documentId: existing.documentId,
-            data: { name: st.name, lat: st.lat, lng: st.lng },
-            locale,
-          });
-          await strapi
-            .documents(SPRING_UID)
-            .publish({ documentId: existing.documentId, locale });
-          stats.updated++;
-          targets.push({
-            documentId: existing.documentId,
-            externalId: st.externalId,
-            lastReportAt: existing.status_updated_at ?? null,
-          });
+        let documentId = existingDocument?.documentId ?? null;
+        const stationWasCreated = !documentId;
+
+        for (const locale of locales) {
+          const existingLocale = documentId
+            ? ((await strapi.db.query(SPRING_UID).findOne({
+                where: {
+                  documentId,
+                  locale,
+                  publishedAt: null,
+                },
+                select: ["id"],
+              })) as { id: number } | null)
+            : null;
+
+          if (!documentId) {
+            const created = await strapi.documents(SPRING_UID).create({
+              data: {
+                name: st.name,
+                lat: st.lat,
+                lng: st.lng,
+                external_source: CHMU_SOURCE,
+                external_id: st.externalId,
+                current_status: "unknown",
+              },
+              locale,
+            });
+            documentId = created.documentId;
+          } else {
+            await strapi.documents(SPRING_UID).update({
+              documentId,
+              data: {
+                name: st.name,
+                lat: st.lat,
+                lng: st.lng,
+                external_source: CHMU_SOURCE,
+                external_id: st.externalId,
+              },
+              locale,
+            });
+          }
+
+          await strapi.documents(SPRING_UID).publish({ documentId, locale });
+
+          if (existingLocale) {
+            stats.localized_updated++;
+          } else {
+            stats.localized_created++;
+          }
         }
+
+        if (!documentId) {
+          throw new Error(`No documentId resolved for ${st.externalId}`);
+        }
+
+        if (stationWasCreated) {
+          stats.created++;
+        } else {
+          stats.updated++;
+        }
+
+        targets.push({
+          documentId,
+          externalId: st.externalId,
+          lastReportAt: existingDocument?.status_updated_at ?? null,
+        });
       } catch (err) {
         stats.errors++;
         strapi.log.error(

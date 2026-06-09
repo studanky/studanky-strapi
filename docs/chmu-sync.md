@@ -45,8 +45,9 @@ Maps ČHMÚ → canonical (`external_source = 'chmu'`, `external_id = objID`) an
 runs in three phases:
 
 1. **Upsert stations** (sequential, SQLite-friendly). Looked up by
-   `(external_source, external_id)` in the **default locale**; created springs
-   are published so they appear on the map. New springs start `current_status = 'unknown'`.
+   `(external_source, external_id)` across localized Spring rows. Each station is
+   created/updated and published in **every configured i18n locale**. New springs
+   start `current_status = 'unknown'`.
 2. **Fetch latest values** with bounded concurrency (limit 8): `now/` first,
    then `recent/` (current → previous month) when `now/` has no file. One
    failure never aborts the run (`try/catch` per object).
@@ -72,11 +73,14 @@ phase-1 `findFirst`-before-`create` upsert. See [Database & Migrations](./databa
 `syncFromChmu()` returns and logs a summary:
 
 ```json
-{ "stations": 85, "created": 85, "updated": 0, "reports": 85, "recent": 46, "skipped": 0, "errors": 0 }
+{ "stations": 85, "locales": ["cs"], "created": 85, "updated": 0, "localized_created": 85, "localized_updated": 0, "reports": 85, "recent": 46, "skipped": 0, "errors": 0 }
 ```
 
-`recent` = values served by the `recent/` fallback (no `now/` file). `skipped` =
-stations with no value anywhere, or whose `dt` is not newer than the cached one.
+`localized_created` / `localized_updated` count locale-specific Spring rows.
+With two configured locales and a fresh import, `created` is still 85 station
+documents while `localized_created` is 170 localized rows. `recent` = values
+served by the `recent/` fallback (no `now/` file). `skipped` = stations with no
+value anywhere, or whose `dt` is not newer than the cached one.
 
 ## Scheduling
 
@@ -92,5 +96,17 @@ Set `CRON_ENABLED=false` to disable (e.g. local dev).
 
 ## Manual run
 
+Preferred internal run (no HTTP, no API token):
+
+```bash
+npm run sync:chmu
+```
+
+The script does not choose or mutate the locale. It loads Strapi, reads all
+configured i18n locales, and the sync service writes Spring rows to all of them.
+
+HTTP ops endpoint:
+
 `POST /api/springs/sync-chmu` (authenticated — call with an admin API token).
-Returns the same stats object. Useful for ops / first import.
+Returns the same stats object. Keep this for remote automation where a shell on
+the Strapi host/container is not available.
