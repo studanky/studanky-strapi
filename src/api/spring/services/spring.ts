@@ -11,8 +11,15 @@ import {
   recentMonths,
 } from "./chmu-client";
 import { mapWithConcurrency } from "../../../utils/concurrency";
+import { haversineMeters, isValidOrigin } from "../../../utils/geo";
 
 const SPRING_UID = "api::spring.spring";
+
+/** Search tuning. */
+const SEARCH_MIN_QUERY = 2; // ignore 0–1 char noise
+const SEARCH_DEFAULT_LIMIT = 10;
+const SEARCH_MAX_LIMIT = 50;
+const SEARCH_CANDIDATE_CAP = 200; // bounds the JS distance sort on broad queries
 const REPORT_UID = "api::report.report";
 const CONFIG_UID = "api::platform-config.platform-config";
 const CHMU_SOURCE = "chmu";
@@ -149,6 +156,73 @@ export default factories.createCoreService(SPRING_UID, ({ strapi }) => ({
       status: "published",
       locale,
     });
+  },
+
+  /**
+   * Search — name autocomplete for the map search box. The user types a query,
+   * picks a result, and the client flies the map to that spring's coordinates.
+   *
+   * Returns the same minimal, map-safe field set as `findInBbox` (so a result
+   * can be rendered as a marker straight away) plus, when the client passes a
+   * valid origin (`lat`/`lng` — user location or map centre), a rounded
+   * `distance_m` and proximity ordering ("nearest first"). Without an origin,
+   * results are alphabetical.
+   *
+   * Reads published, requested-locale rows. Name match is case-insensitive and
+   * partial (`$containsi`). A candidate cap bounds the in-JS distance sort on
+   * broad queries; queries shorter than `SEARCH_MIN_QUERY` return [].
+   */
+  async search(params: {
+    q?: string;
+    lat?: number;
+    lng?: number;
+    limit?: number;
+    locale?: string;
+  }) {
+    const q = (params.q ?? "").trim();
+    if (q.length < SEARCH_MIN_QUERY) {
+      return [];
+    }
+
+    const limit = Math.min(
+      Math.max(1, params.limit || SEARCH_DEFAULT_LIMIT),
+      SEARCH_MAX_LIMIT
+    );
+    const locale = params.locale || (await getDefaultLocale(strapi));
+
+    const candidates = (await strapi.documents(SPRING_UID).findMany({
+      filters: { name: { $containsi: q } },
+      // Same allowlist as the bbox map path — no history, no private data.
+      fields: ["name", "lat", "lng", "current_status", "status_updated_at"],
+      status: "published",
+      locale,
+      sort: { name: "asc" },
+      limit: SEARCH_CANDIDATE_CAP,
+    })) as Array<{ lat: number | string; lng: number | string }>;
+
+    if (!isValidOrigin(params.lat, params.lng)) {
+      return candidates.slice(0, limit);
+    }
+
+    return candidates
+      .map((s) => ({
+        ...s,
+        distance_m: Math.round(
+          haversineMeters(
+            params.lat as number,
+            params.lng as number,
+            Number(s.lat),
+            Number(s.lng)
+          )
+        ),
+      }))
+      // Rows with an unparseable coordinate sink to the bottom.
+      .sort(
+        (a, b) =>
+          (Number.isNaN(a.distance_m) ? Infinity : a.distance_m) -
+          (Number.isNaN(b.distance_m) ? Infinity : b.distance_m)
+      )
+      .slice(0, limit);
   },
 
   /**

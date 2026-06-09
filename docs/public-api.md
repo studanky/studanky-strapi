@@ -8,6 +8,7 @@ would be captured by core `/springs/:documentId`).
 | Method | Path | Handler | Auth | Purpose |
 |---|---|---|---|---|
 | GET | `/api/springs/map` | `spring.map` | public | map markers within a bbox |
+| GET | `/api/springs/search` | `spring.search` | public | name search → fly map to a spring |
 | GET | `/api/springs/:documentId/reports` | `spring.reports` | public | paginated report history |
 | POST | `/api/springs/sync-chmu` | `spring.syncChmu` | API token | manual ČHMÚ sync ([docs](./chmu-sync.md)) |
 
@@ -30,6 +31,36 @@ Minimal payload for rendering markers. The service (`findInBbox`) queries the
 The client computes the third "stale" state itself from `status_updated_at` +
 `platform-config.freshness_threshold_days` — the server only returns
 `is_flowing` / `is_not_flowing` / `unknown` + the timestamp.
+
+## `GET /api/springs/search?q=ostr&lat=50.1&lng=17.0&limit=10&locale=cs`
+
+Name autocomplete for the map **search box**: the user types, picks a result,
+and the client flies the map to its `lat`/`lng`. The service (`search`) does a
+case-insensitive partial match on `name` and returns the **same map-safe fields
+as `/map`** (`name`, `lat`, `lng`, `current_status`, `status_updated_at`,
+`documentId`) — so a result is renderable as a marker immediately.
+
+| Param | Required | Default | Notes |
+|---|---|---|---|
+| `q` | yes | — | search text; **min 2 chars** (else `400`) |
+| `lat`,`lng` | no | — | origin (user GPS or map centre); when both valid → nearest-first + `distance_m` |
+| `limit` | no | `10` | clamped to `50` |
+| `locale` | no | i18n default | which localized name to search/return |
+
+With a valid `lat`/`lng` origin results are ordered **nearest-first** and each
+carries a rounded `distance_m` (metres, haversine); without it they are
+alphabetical by `name`. Broad queries are capped at 200 candidates before the
+distance sort.
+
+```jsonc
+// 200 — with origin (nearest-first, includes distance_m)
+{ "data": [ { "documentId": "…", "name": "Ostružná", "lat": 50.18, "lng": 17.05,
+              "current_status": "is_flowing", "status_updated_at": "2026-05-31T05:00:00.000Z",
+              "distance_m": 2310 } ] }
+```
+
+As with `/map`, the client computes the "stale" state itself from
+`status_updated_at` + `platform-config.freshness_threshold_days`.
 
 ## `GET /api/springs/:documentId/reports?page=1&pageSize=20`
 

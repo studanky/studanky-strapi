@@ -26,6 +26,34 @@ export default factories.createCoreController(SPRING_UID, ({ strapi }) => ({
   },
 
   /**
+   * GET /api/springs/search?q=&lat=&lng=&limit=&locale=
+   * Name autocomplete for the map search box. Returns map-safe fields so a
+   * picked result can fly the map to its coordinates. With a valid lat/lng
+   * origin, results are nearest-first (+ `distance_m`). Logic lives in the
+   * service.
+   */
+  async search(ctx) {
+    await this.validateQuery(ctx);
+
+    const { q, lat, lng, limit, locale } = ctx.query;
+    if (!q || typeof q !== "string" || q.trim().length < 2) {
+      return ctx.badRequest(
+        'Missing or too short "q" query (minimum 2 characters)'
+      );
+    }
+
+    const data = await strapi.service(SPRING_UID).search({
+      q,
+      lat: lat != null ? Number(lat) : undefined,
+      lng: lng != null ? Number(lng) : undefined,
+      limit: limit != null ? Number(limit) : undefined,
+      locale: typeof locale === "string" ? locale : undefined,
+    });
+
+    return { data };
+  },
+
+  /**
    * GET /api/springs/:documentId/reports?page=&pageSize=
    * Paginated, public report history (private fields never fetched).
    */

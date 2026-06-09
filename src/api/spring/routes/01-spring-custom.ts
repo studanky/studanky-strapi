@@ -15,6 +15,12 @@ export default {
     },
     {
       method: "GET",
+      path: "/springs/search",
+      handler: "spring.search",
+      config: { auth: false }, // public read
+    },
+    {
+      method: "GET",
       path: "/springs/:documentId/reports",
       handler: "spring.reports",
       config: { auth: false }, // public read
