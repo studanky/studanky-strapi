@@ -94,6 +94,7 @@ This API mixes **two** response shapes. Don't assume one:
 |---|---|---|
 | `documentId` | string | **stable id**, used in URLs & QR codes |
 | `name` | string | localized |
+| `name_search` | string | private/internal; localized normalized copy of `name` for accent-insensitive search |
 | `description` | text \| null | localized |
 | `lat`, `lng` | number | WGS‑84 decimal degrees (not localized) |
 | `current_status` | enum | `is_flowing` \| `is_not_flowing` \| `unknown` — **denormalized** cache of the latest report (see [§4](#4-client-side-logic)) |

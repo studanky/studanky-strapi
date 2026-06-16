@@ -8,7 +8,7 @@ would be captured by core `/springs/:documentId`).
 | Method | Path | Handler | Auth | Purpose |
 |---|---|---|---|---|
 | GET | `/api/springs/map` | `spring.map` | public | map markers within a bbox |
-| GET | `/api/springs/search` | `spring.search` | public | name search → fly map to a spring |
+| GET | `/api/springs/search` | `spring.search` | public | accent-insensitive name search → fly map to a spring |
 | GET | `/api/springs/:documentId/reports` | `spring.reports` | public | paginated report history |
 | POST | `/api/springs/sync-chmu` | `spring.syncChmu` | API token | manual ČHMÚ sync ([docs](./chmu-sync.md)) |
 
@@ -36,9 +36,10 @@ The client computes the third "stale" state itself from `status_updated_at` +
 
 Name autocomplete for the map **search box**: the user types, picks a result,
 and the client flies the map to its `lat`/`lng`. The service (`search`) does a
-case-insensitive partial match on `name` and returns the **same map-safe fields
-as `/map`** (`name`, `lat`, `lng`, `current_status`, `status_updated_at`,
-`documentId`) — so a result is renderable as a marker immediately.
+case-insensitive, accent-insensitive partial match on `name` (for example
+`ostruzna` matches `Ostružná`) and returns the **same map-safe fields as `/map`**
+(`name`, `lat`, `lng`, `current_status`, `status_updated_at`, `documentId`) —
+so a result is renderable as a marker immediately.
 
 | Param | Required | Default | Notes |
 |---|---|---|---|

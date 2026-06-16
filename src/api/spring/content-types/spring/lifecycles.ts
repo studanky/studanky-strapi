@@ -2,6 +2,22 @@ import QRCode from "qrcode";
 import * as fs from "fs";
 import * as path from "path";
 import * as os from "os";
+import { normalizeSearchText } from "../../../../utils/search";
+
+const SPRING_UID = "api::spring.spring";
+
+const syncNameSearch = (data: Record<string, unknown>) => {
+  const attributes = strapi.contentTypes[SPRING_UID]?.attributes as
+    | Record<string, unknown>
+    | undefined;
+
+  if (
+    typeof data.name === "string" &&
+    attributes?.["name_search"]
+  ) {
+    data.name_search = normalizeSearchText(data.name);
+  }
+};
 
 /**
  * Lifecycle hooks for the Spring content type.
@@ -11,6 +27,14 @@ import * as os from "os";
  * and linked to the Spring's qr_code field.
  */
 export default {
+  async beforeCreate(event: { params: { data: Record<string, unknown> } }) {
+    syncNameSearch(event.params.data);
+  },
+
+  async beforeUpdate(event: { params: { data: Record<string, unknown> } }) {
+    syncNameSearch(event.params.data);
+  },
+
   async afterCreate(event: {
     result: { id: number; documentId: string; qr_code?: unknown };
     params: { data: Record<string, unknown> };

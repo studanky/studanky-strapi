@@ -630,6 +630,13 @@ export interface ApiSpringSpring extends Struct.CollectionTypeSchema {
           localized: true;
         };
       }>;
+    name_search: Schema.Attribute.String &
+      Schema.Attribute.Private &
+      Schema.Attribute.SetPluginOptions<{
+        i18n: {
+          localized: true;
+        };
+      }>;
     owner: Schema.Attribute.Relation<'manyToOne', 'api::owner.owner'>;
     photo: Schema.Attribute.Media<'images'> &
       Schema.Attribute.SetPluginOptions<{

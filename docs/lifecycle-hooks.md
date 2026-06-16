@@ -2,12 +2,29 @@
 
 This document describes custom lifecycle hooks in this Strapi application.
 
-> **Design note:** lifecycle hooks are used **only** for self-contained side
-> effects (QR generation below). Cross-entity business logic — notably status
-> denormalization — lives in services, not hooks, so it is deterministic and
-> testable. See [Status Denormalization](./denormalization.md).
+> **Design note:** lifecycle hooks are used only for self-contained work on the
+> Spring itself (search-name synchronization and QR generation below).
+> Cross-entity business logic — notably status denormalization — lives in
+> services, not hooks, so it is deterministic and testable. See
+> [Status Denormalization](./denormalization.md).
 
 ## Spring Content Type
+
+### Search Name Synchronization
+
+**Location:** `src/api/spring/content-types/spring/lifecycles.ts`
+
+When a Spring's localized `name` is created or updated, the private localized
+`name_search` field is updated to a lowercase, accent-free copy. This supports
+public search queries without diacritics, e.g. `vyprachtice` → `Výprachtice`.
+
+The hook is guarded so it only writes `name_search` after the field exists in
+the content type.
+
+#### Trigger
+
+- **Event:** `beforeCreate`, `beforeUpdate`
+- **Content Type:** `api::spring.spring`
 
 ### QR Code Auto-Generation
 

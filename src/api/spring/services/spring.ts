@@ -12,11 +12,13 @@ import {
 } from "./chmu-client";
 import { mapWithConcurrency } from "../../../utils/concurrency";
 import { haversineMeters, isValidOrigin } from "../../../utils/geo";
+import { normalizeSearchText } from "../../../utils/search";
 
 const SPRING_UID = "api::spring.spring";
 
 /** Search tuning. */
 const SEARCH_MIN_QUERY = 2; // ignore 0–1 char noise
+const SEARCH_MAX_QUERY = 80;
 const SEARCH_DEFAULT_LIMIT = 10;
 const SEARCH_MAX_LIMIT = 50;
 const SEARCH_CANDIDATE_CAP = 200; // bounds the JS distance sort on broad queries
@@ -66,6 +68,24 @@ async function getConfiguredLocales(strapi: Core.Strapi): Promise<string[]> {
   }
 
   return [await getDefaultLocale(strapi)];
+}
+
+function hasNameSearchField(strapi: Core.Strapi): boolean {
+  const attributes = strapi.contentTypes[SPRING_UID]?.attributes as
+    | Record<string, unknown>
+    | undefined;
+  return Boolean(attributes?.["name_search"]);
+}
+
+function springDataWithSearchName<T extends Record<string, unknown>>(
+  strapi: Core.Strapi,
+  data: T
+): T & { name_search?: string } {
+  if (hasNameSearchField(strapi) && typeof data.name === "string") {
+    return { ...data, name_search: normalizeSearchText(data.name) };
+  }
+
+  return data;
 }
 
 export default factories.createCoreService(SPRING_UID, ({ strapi }) => ({
@@ -168,9 +188,10 @@ export default factories.createCoreService(SPRING_UID, ({ strapi }) => ({
    * `distance_m` and proximity ordering ("nearest first"). Without an origin,
    * results are alphabetical.
    *
-   * Reads published, requested-locale rows. Name match is case-insensitive and
-   * partial (`$containsi`). A candidate cap bounds the in-JS distance sort on
-   * broad queries; queries shorter than `SEARCH_MIN_QUERY` return [].
+   * Reads published, requested-locale rows. Name match is case-insensitive,
+   * accent-insensitive when the internal `name_search` field exists, and partial
+   * (`$containsi`). A candidate cap bounds the in-JS distance sort on broad
+   * queries; queries shorter than `SEARCH_MIN_QUERY` return [].
    */
   async search(params: {
     q?: string;
@@ -179,19 +200,25 @@ export default factories.createCoreService(SPRING_UID, ({ strapi }) => ({
     limit?: number;
     locale?: string;
   }) {
-    const q = (params.q ?? "").trim();
+    const rawQ = (params.q ?? "").trim().slice(0, SEARCH_MAX_QUERY);
+    const searchByNormalizedName = hasNameSearchField(strapi);
+    const q = searchByNormalizedName ? normalizeSearchText(rawQ) : rawQ;
     if (q.length < SEARCH_MIN_QUERY) {
       return [];
     }
 
+    const requestedLimit = Number.isFinite(params.limit as number)
+      ? (params.limit as number)
+      : SEARCH_DEFAULT_LIMIT;
     const limit = Math.min(
-      Math.max(1, params.limit || SEARCH_DEFAULT_LIMIT),
+      Math.max(1, requestedLimit),
       SEARCH_MAX_LIMIT
     );
     const locale = params.locale || (await getDefaultLocale(strapi));
+    const searchField = searchByNormalizedName ? "name_search" : "name";
 
     const candidates = (await strapi.documents(SPRING_UID).findMany({
-      filters: { name: { $containsi: q } },
+      filters: { [searchField]: { $containsi: q } },
       // Same allowlist as the bbox map path — no history, no private data.
       fields: ["name", "lat", "lng", "current_status", "status_updated_at"],
       status: "published",
@@ -332,27 +359,27 @@ export default factories.createCoreService(SPRING_UID, ({ strapi }) => ({
 
           if (!documentId) {
             const created = await strapi.documents(SPRING_UID).create({
-              data: {
+              data: springDataWithSearchName(strapi, {
                 name: st.name,
                 lat: st.lat,
                 lng: st.lng,
                 external_source: CHMU_SOURCE,
                 external_id: st.externalId,
                 current_status: "unknown",
-              },
+              }),
               locale,
             });
             documentId = created.documentId;
           } else {
             await strapi.documents(SPRING_UID).update({
               documentId,
-              data: {
+              data: springDataWithSearchName(strapi, {
                 name: st.name,
                 lat: st.lat,
                 lng: st.lng,
                 external_source: CHMU_SOURCE,
                 external_id: st.externalId,
-              },
+              }),
               locale,
             });
           }

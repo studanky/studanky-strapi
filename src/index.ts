@@ -1,6 +1,10 @@
 import type { Core } from "@strapi/strapi";
 import { createSpringScope } from "./middlewares/document/spring-scope";
 import { ensureDbIndexes } from "./utils/ensure-db-indexes";
+import {
+  ensureSpringSearchIndexes,
+  ensureSpringSearchNames,
+} from "./utils/ensure-spring-search";
 
 export default {
   /**
@@ -23,5 +27,7 @@ export default {
    */
   async bootstrap({ strapi }: { strapi: Core.Strapi }) {
     await ensureDbIndexes(strapi);
+    await ensureSpringSearchNames(strapi);
+    await ensureSpringSearchIndexes(strapi);
   },
 };
