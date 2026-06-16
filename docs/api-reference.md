@@ -104,7 +104,7 @@ This API mixes **two** response shapes. Don't assume one:
 | `photo` | media \| null | single image — populate to get it |
 | `qr_code` | media \| null | generated QR PNG (encodes `documentId`) — populate to get it |
 | `owner` | relation \| null | the B2B owner (e.g. ČHMÚ) — populate to get it |
-| `external_source` | string \| null | e.g. `"chmu"` (data provenance) |
+| `external_source` | string \| null | e.g. `"chmu"` — provenance of the Spring/station metadata, not the latest Report |
 | `external_id` | string \| null | source key (ČHMÚ `objID`) |
 
 > `managers` (admin users) exists on the model but is an **admin‑only** relation —
@@ -124,6 +124,7 @@ One status record for a spring (from ČHMÚ in the MVP; from users in Phase 2).
 | `water_clarity` | enum \| null | `crystal_clear` \| `clear` \| `slightly_turbid` \| `turbid` \| `heavily_turbid` |
 | `note` | text \| null | free text |
 | `reported_at` | datetime | ISO‑8601 UTC — sort/age key |
+| `source_type` | enum | `chmu` \| `user` — data origin for client badges; server-owned, never trusted from client input |
 
 **Never exposed via the API** (private, GDPR — spec §9.2): `user_lat`, `user_lng`,
 `device_id`, `client_report_id`. Don't expect them in any response.
@@ -251,7 +252,8 @@ Sorted **newest first** (`reported_at` desc).
       "has_odor": false,
       "water_clarity": "clear",
       "note": null,
-      "reported_at": "2026-05-31T05:00:00.000Z"
+      "reported_at": "2026-05-31T05:00:00.000Z",
+      "source_type": "chmu"
     }
   ],
   "meta": { "pagination": { "page": 1, "pageSize": 20, "total": 39, "pageCount": 2 } }
@@ -263,6 +265,8 @@ Sorted **newest first** (`reported_at` desc).
 - Infinite scroll: load `page=1`, then `page+1` until `page >= pageCount`.
 - Show **concrete age** of `data[0].reported_at` ("ověřeno před 3 dny") — spec
   makes data freshness a first‑class value.
+- Use `source_type` for a source badge (`chmu` vs `user`). It is the origin of
+  the record, not a trust score.
 - `flow_rate_lps` is a **confirming, secondary** number ("measured, not a guess");
   surface it next to the 1–5 scale when present.
 
@@ -419,6 +423,8 @@ backend for this is **not implemented in the MVP** — there is **no public
 
 - `POST /api/reports` with `data: { spring: <documentId>, is_flowing, flow_scale?,
   flow_rate_lps?, has_odor?, water_clarity?, note?, reported_at, client_report_id }`.
+- Clients **must not send `source_type`**. The server assigns `source_type: "user"`
+  on report create and ignores any client-supplied value (anti-spoofing).
 - **`client_report_id`**: a stable UUID generated per queued report → idempotent
   retries from the offline queue.
 - **`X-Timestamp` + `X-App-Signature`** HMAC‑SHA256 over `"{timestamp}:{springDocumentId}"`,

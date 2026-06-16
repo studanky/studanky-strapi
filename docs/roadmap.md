@@ -13,6 +13,8 @@ endpoints, admin manager scoping. The items below are recommended follow-ups.
   `spring.findOne`, `platform-config.find` (the custom `map` / `reports` routes are
   already `auth:false`). **Do NOT enable any `report.*` action** — reports are
   read via spring history only. See [Public API](./public-api.md).
+- **Keep reports append-only**: `report.update` and `report.delete` should never
+  be public capabilities.
 - **Restrict CORS** `origin` (`config/middlewares.ts` → `strapi::cors`) to the
   app's domains in production (default is permissive). See [API Security](./api-security.md).
 - **Create an admin API token** for `POST /api/springs/sync-chmu` if you want
@@ -33,12 +35,14 @@ endpoints, admin manager scoping. The items below are recommended follow-ups.
 - **`report.submit` service** (override `POST /api/reports`): idempotency via
   **`client_report_id`** (return the existing report instead of a 409 on the
   unique index — deferred item "C9"), QR HMAC resolve, l/s → scale conversion,
-  then `refreshLatest`. The unique index already guarantees no duplicates at the
-  DB level.
+  force `source_type: "user"`, then `refreshLatest`. The unique index already
+  guarantees no duplicates at the DB level.
+- **Do not accept `source_type` from clients**. The source is determined by the
+  server entrypoint: ČHMÚ sync writes `chmu`, report submission writes `user`.
 - Mark **`device_id` private** when the submit path returns/stores it.
-- **Report fields** still to add (deferred): `source`, `measurement_method`,
-  `received_at`, `trust_score`, `reporter` (relation → users-permissions user,
-  **private**), `flagged_count`.
+- **Report fields** still to add (deferred): `measurement_method`, `received_at`,
+  `trust_score`, `reporter` (relation → users-permissions user, **private**),
+  `flagged_count`.
 - **QR signature**: a server-side `sig = HMAC(documentId, SERVER_SECRET)` with the
   secret **only on the server** — keep this separate from any client-embedded
   signature. See the security note below.
@@ -61,5 +65,6 @@ score + verified/anonymous + flagging**. See [API Security](./api-security.md).
 ## Other sources (future)
 
 The model is source-neutral. A new source = a new adapter (like `chmu-client.ts`)
-mapping into the canonical model, plus a sync entry. No core changes needed; do
-not leak source specifics into the model.
+mapping into the canonical model, plus a sync entry. If the source should be
+visible in the app, add a new `source_type` enum value and document its badge
+label; do not leak source-specific fields into the core report payload.

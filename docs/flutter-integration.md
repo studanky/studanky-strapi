@@ -144,6 +144,10 @@ Future<void> submitReport({
 }
 ```
 
+Do **not** include `source_type` in the client payload. The backend owns that
+field: community submissions are forced to `source_type: "user"` and ČHMÚ imports
+are created by the sync as `source_type: "chmu"`.
+
 ---
 
 ## Error Responses

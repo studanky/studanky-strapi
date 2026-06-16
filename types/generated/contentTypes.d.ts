@@ -535,6 +535,9 @@ export interface ApiReportReport extends Struct.CollectionTypeSchema {
     note: Schema.Attribute.Text;
     publishedAt: Schema.Attribute.DateTime;
     reported_at: Schema.Attribute.DateTime & Schema.Attribute.Required;
+    source_type: Schema.Attribute.Enumeration<['user', 'chmu']> &
+      Schema.Attribute.Required &
+      Schema.Attribute.DefaultTo<'user'>;
     spring: Schema.Attribute.Relation<'manyToOne', 'api::spring.spring'>;
     updatedAt: Schema.Attribute.DateTime;
     updatedBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &

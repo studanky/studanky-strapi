@@ -63,15 +63,24 @@ distance sort.
 As with `/map`, the client computes the "stale" state itself from
 `status_updated_at` + `platform-config.freshness_threshold_days`.
 
+`source_type` is intentionally not returned by `/map` or `/search`; those
+endpoints expose only Spring-level marker data. Load report history when the UI
+needs the source of the latest observation.
+
 ## `GET /api/springs/:documentId/reports?page=1&pageSize=20`
 
 Paginated history (lazy load). The service (`history`) returns an **explicit
 public field allowlist** — `is_flowing`, `flow_scale`, `flow_rate_lps`,
-`has_odor`, `water_clarity`, `note`, `reported_at`. `pageSize` is clamped to 100.
+`has_odor`, `water_clarity`, `note`, `reported_at`, `source_type`. `pageSize`
+is clamped to 100.
+
+`source_type` is an enum: `chmu` for imported ČHMÚ sensor reports and `user` for
+client-created/community reports. Clients can use it to render a source badge.
 
 ```jsonc
 // 200
-{ "data": [ … ], "meta": { "pagination": { "page": 1, "pageSize": 20, "total": 39, "pageCount": 2 } } }
+{ "data": [ { "is_flowing": true, "source_type": "chmu", "reported_at": "2026-05-31T05:00:00.000Z" } ],
+  "meta": { "pagination": { "page": 1, "pageSize": 20, "total": 39, "pageCount": 2 } } }
 ```
 
 ## Privacy

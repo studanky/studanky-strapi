@@ -54,7 +54,7 @@ QR kód nese **`documentId` + HMAC podpis** (viz sekce 6). Žádné extra pole n
 | Pole | Typ | Pozn. |
 |---|---|---|
 | `spring` | relation manyToOne → `spring`, **index** | |
-| `source` | enum: `chmu` \| `user_verified` \| `user_anonymous` | úroveň důvěry podle původu |
+| `source_type` | enum: `chmu` \| `user` | původ dat pro badge; nastavuje server, klient ho neposílá |
 | `measurementMethod` | enum: `chmu_sensor` \| `stopwatch` \| `subjective` | |
 | `isFlowing` | boolean | nejdůležitější signál |
 | `flowScale` | integer (1–5), nullable | společná škála |
@@ -246,7 +246,7 @@ async submit(input, user) {
   const report = await strapi.documents('api::report.report').create({
     data: {
       spring: spring.documentId,
-      source: user ? 'user_verified' : 'user_anonymous',
+      source_type: 'user',
       measurementMethod: input.flowRateLps != null ? 'stopwatch' : 'subjective',
       isFlowing: input.isFlowing,
       flowScale, flowRateLps: input.flowRateLps,
@@ -314,7 +314,7 @@ export default ({ env }) => ({
    - `isFlowing = valueLps > 0` (prázdné `tsData` → `unknown`),
    - `measuredAt = dt`,
    - `flowScale = flowScaleFromLps(valueLps)`.
-3. **Jen pokud je `dt` novější** než `lastReportAt` studánky → vytvořit nový `report` (`source='chmu'`, `measurementMethod='chmu_sensor'`) přes Document Service a zavolat `refreshLatest`. → idempotence: cron běží denně, ale ČHMÚ aktualizuje jen některé objekty.
+3. **Jen pokud je `dt` novější** než `lastReportAt` studánky → vytvořit nový `report` (`source_type='chmu'`, `measurementMethod='chmu_sensor'`) přes Document Service a zavolat `refreshLatest`. → idempotence: cron běží denně, ale ČHMÚ aktualizuje jen některé objekty.
 4. **Throttling:** ~300 objektů = ~300 jednotlivých stažení. Omezit souběh (např. concurrency 5–10, `p-limit`), timeout, retry; jedna selhavší stanice nesmí shodit běh (`try/catch` per objekt). Při výpadku ČHMÚ **nechat poslední data** (fallback dle NFR).
 5. Volitelně podmíněné dotazy (`If-Modified-Since`) a logování výsledku do kolekce `job-log` pro observabilitu.
 
@@ -333,7 +333,7 @@ export default ({ env }) => ({
 
 ## 7. Oprávnění, soukromí a výkon
 
-- **Public role:** povolit pouze čtení `spring.map`, `spring.findOne`, `spring.reports`, `platform-config.find`; (Fáze 2) `report.create`, `report.flag`.
+- **Public role:** povolit pouze čtení `spring.map`, `spring.findOne`, `spring.reports`, `platform-config.find`; (Fáze 2) `report.create`, `report.flag`. `report.update` a `report.delete` nikdy nepovolovat veřejně.
 - **Sanitizace outputu:** v custom controllerech používat `this.sanitizeOutput` / `sanitizeQuery` / `validateQuery`. Pole `reporter` a `capturedLocation` označit jako **private** → nikdy nejdou ven (GDPR, spec 9.2).
 - **Rate limiting** na `POST /reports`, zvlášť pro anonymní.
 - **Indexy:** `(externalSource, externalId)` unikátní, `(latitude, longitude)`, `report.spring`, `report.measuredAt`, `report.clientReportId` unikátní.

@@ -65,6 +65,15 @@
     "client_report_id": {
       "type": "string",
       "unique": true
+    },
+    "source_type": {
+      "type": "enumeration",
+      "required": true,
+      "default": "user",
+      "enum": [
+        "user",
+        "chmu"
+      ]
     }
   }
 }

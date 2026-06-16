@@ -21,6 +21,9 @@ plan for when submission ships in Phase 2.
 
 - **Verify Public role RBAC**: enable only `spring.find`/`findOne` and
   `platform-config.find`. Do **not** enable any `report.*` action.
+- **Report writes stay closed in the MVP**: public clients read reports only via
+  `GET /api/springs/:documentId/reports`. Never enable `report.update` or
+  `report.delete`; reports are append-only observations.
 - **CORS**: restrict `config/middlewares.ts` `strapi::cors` `origin` to the app's
   domains in production (default is permissive).
 - **`sync-chmu`**: keep authenticated (admin API token only); consider a
@@ -48,7 +51,14 @@ queue. Real trustworthiness comes from:
 3. **`client_report_id` UNIQUE idempotence** — the DB unique index already
    exists; the submit service returns the existing report on a duplicate instead
    of erroring (offline-queue retries).
-4. **Phase 3**: verified vs anonymous weighting, trust score, false-report flagging.
+4. **Server-owned `source_type`** — the create path must force `source_type: "user"`
+   and ignore client input. ČHMÚ reports are created only by the sync as
+   `source_type: "chmu"`.
+5. **Phase 3**: verified vs anonymous weighting, trust score, false-report flagging.
+
+`source_type` is provenance, not authorization or trust. Do not overload it for
+verified/anonymous distinctions; model those as auth/trust fields when Phase 3
+ships.
 
 ### HMAC (if kept) — keep it cheap, don't expand
 
@@ -64,6 +74,8 @@ queue. Real trustworthiness comes from:
 
 - Mark `device_id` **private** (client identifier) alongside `user_lat`/`user_lng`.
 - Keep `reporter` (→ users-permissions user) private when added.
+- Keep reports immutable from the public API: create-only for Phase 2 submission,
+  no public update/delete route.
 
 > The reference implementation (HMAC policy + geofence util) lived on the
 > `feature/api-security` branch and is recoverable from git history; re-introduce

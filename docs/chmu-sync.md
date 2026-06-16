@@ -51,15 +51,20 @@ runs in three phases:
 2. **Fetch latest values** with bounded concurrency (limit 8): `now/` first,
    then `recent/` (current → previous month) when `now/` has no file. One
    failure never aborts the run (`try/catch` per object).
-3. **Append report when newer.** A Report (`is_flowing = valueLps > 0`,
-   `flow_rate_lps`, `flow_scale` via [`flowScaleFromLps`](./denormalization.md#flow-scale),
-   `reported_at = dt`) is created only if `dt` is strictly newer than the spring's
+3. **Append report when newer.** A Report (`source_type = 'chmu'`,
+   `is_flowing = valueLps > 0`, `flow_rate_lps`, `flow_scale` via
+   [`flowScaleFromLps`](./denormalization.md#flow-scale), `reported_at = dt`) is
+   created only if `dt` is strictly newer than the spring's
    `status_updated_at`, then [`refreshLatest`](./denormalization.md) denormalizes
    the cached status. → idempotent across daily runs (ČHMÚ updates only some objects).
 
 ČHMÚ reports leave `has_odor` / `water_clarity` / `device_id` / `client_report_id`
 as `null` (sensor data has no such fields; sync idempotence is the `dt` check, not
 the offline-queue id).
+
+`source_type` is the public data-origin flag. New ČHMÚ records are always written
+as `chmu`; community/client-created records are written through the Report create
+path as `user`.
 
 ### Uniqueness note
 

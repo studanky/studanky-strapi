@@ -279,6 +279,7 @@ export default factories.createCoreService(SPRING_UID, ({ strapi }) => ({
           "water_clarity",
           "note",
           "reported_at",
+          "source_type",
         ],
       }),
       strapi.documents(REPORT_UID).count({ filters }),
@@ -465,6 +466,7 @@ export default factories.createCoreService(SPRING_UID, ({ strapi }) => ({
           // handled by the `dt`-newer check above, not the offline-queue id).
           data: {
             spring: t.documentId,
+            source_type: "chmu",
             is_flowing: value.valueLps > 0,
             flow_rate_lps: value.valueLps,
             flow_scale: flowScale,
