@@ -10,6 +10,7 @@ would be captured by core `/springs/:documentId`).
 | GET | `/api/springs/map` | `spring.map` | public | map markers within a bbox |
 | GET | `/api/springs/search` | `spring.search` | public | accent-insensitive name search → fly map to a spring |
 | GET | `/api/springs/:documentId/reports` | `spring.reports` | public | paginated report history |
+| GET | `/api/springs/:documentId/preview` | `spring.preview` | public | minimal share/preview payload (deep-link web fallback) |
 | POST | `/api/springs/sync-chmu` | `spring.syncChmu` | API token | manual ČHMÚ sync ([docs](./chmu-sync.md)) |
 
 > Core `GET /api/springs/:documentId` (single spring) and `GET /api/platform-config`
@@ -81,6 +82,47 @@ client-created/community reports. Clients can use it to render a source badge.
 // 200
 { "data": [ { "is_flowing": true, "source_type": "chmu", "reported_at": "2026-05-31T05:00:00.000Z" } ],
   "meta": { "pagination": { "page": 1, "pageSize": 20, "total": 39, "pageCount": 2 } } }
+```
+
+## `GET /api/springs/:documentId/preview?locale=cs`
+
+Minimal **share/preview** payload. When a user shares a spring with someone who
+does **not** have the app installed, the deep link falls back to the web; this
+endpoint feeds that preview page (with a call-to-action to install the app).
+
+**Teaser boundary** (spec §3, §11): returns only fields that live directly on
+the Spring object — `name`, `lat`, `lng`, `description`, a `photo`,
+`current_status` (whether it currently flows) and `status_updated_at` (when that
+was last updated). It **deliberately withholds** the flow **strength**
+(`last_flow_scale` / `last_flow_rate_lps`), water clarity/odor and the **report
+history** — those stay app-only, so the web page shows the basics and links to
+the app for more.
+
+No server-side freshness/staleness verdict: the web just shows the raw
+`status_updated_at` and lets the reader judge (the tri-state "stale" rule stays a
+client concern, as on `/map` and `/search`). Reads the **published**,
+requested-locale row; unknown/unpublished `documentId` → `404`.
+
+| Param | Required | Default | Notes |
+|---|---|---|---|
+| `locale` | no | i18n default | which localized `name` / `description` to return |
+
+Field optionality mirrors the Spring schema: `name`, `lat`, `lng` and
+`current_status` are **required** (always present); `status_updated_at`,
+`description` and `photo` are **optional** — `null` when unset. `photo` is
+especially expected to be `null` for now (not yet populated); the web handles
+missing values.
+
+```jsonc
+// 200
+{ "data": {
+  "documentId": "…", "name": "Ostružná", "lat": 50.18, "lng": 17.05,
+  "current_status": "is_flowing", "status_updated_at": "2026-05-31T05:00:00.000Z",
+  "description": "Studánka u modré značky…",
+  "photo": { "url": "https://…/spring.jpg", "alternativeText": null,
+             "width": 1600, "height": 1200, "thumbnail_url": "https://…/thumbnail_spring.jpg" }
+} }
+// photo is null when no image is set; description/status_updated_at likewise.
 ```
 
 ## Privacy

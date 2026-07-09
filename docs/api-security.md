@@ -8,6 +8,7 @@ endpoint**. The public surface is:
 - `GET /api/springs/map` — public read ([Public API](./public-api.md))
 - `GET /api/springs/search` — public read, map-safe fields only
 - `GET /api/springs/:documentId/reports` — public read (private fields never exposed)
+- `GET /api/springs/:documentId/preview` — public read, teaser subset (no flow strength / history)
 - `GET /api/springs/:documentId`, `GET /api/platform-config` — core reads (enable per Public RBAC)
 - `POST /api/springs/sync-chmu` — **authenticated** (admin API token), ops-only
 

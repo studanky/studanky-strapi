@@ -297,6 +297,102 @@ export default factories.createCoreService(SPRING_UID, ({ strapi }) => ({
   },
 
   /**
+   * Preview — a deliberately minimal PUBLIC subset of a Spring for the web
+   * "share" page. When a user shares a spring with someone who does NOT have the
+   * app installed, the deep link falls back to the web; this endpoint feeds that
+   * preview with a call-to-action to install the app for the full detail.
+   *
+   * TEASER BOUNDARY (spec §3, §11): returns only fields that live directly on
+   * the Spring object — name, coordinates, description, photo, whether it
+   * currently flows (`current_status`) and when that was last updated
+   * (`status_updated_at`). It withholds the app's core value: flow STRENGTH
+   * (`last_flow_scale` / `last_flow_rate_lps`), water clarity/odor, and the full
+   * report history all stay app-only, so the visitor is motivated to install.
+   *
+   * The web just shows the raw status + "last updated" timestamp and links to
+   * the app for more — no server-side freshness/staleness verdict (the tri-state
+   * "stale" rule stays a client concern, as on `/map` and `/search`).
+   *
+   * Optionality mirrors the Spring schema: `name`, `lat`, `lng` and
+   * `current_status` are required (always present); `status_updated_at`,
+   * `description` and `photo` are optional (null when unset — the web handles
+   * missing values, notably the not-yet-sent photo).
+   *
+   * Reads the published, requested-locale row. Returns null when no published
+   * spring exists for that documentId/locale → the controller answers 404.
+   */
+  async preview(documentId: string, locale?: string) {
+    if (!documentId) {
+      return null;
+    }
+
+    const resolvedLocale = locale || (await getDefaultLocale(strapi));
+
+    const spring = (await strapi.documents(SPRING_UID).findOne({
+      documentId,
+      status: "published",
+      locale: resolvedLocale,
+      // Spring-object fields only — NO flow strength (last_flow_scale /
+      // last_flow_rate_lps) and NO report history; those stay app-only.
+      fields: [
+        "name",
+        "lat",
+        "lng",
+        "description",
+        "current_status",
+        "status_updated_at",
+      ],
+      populate: {
+        photo: {
+          fields: ["url", "alternativeText", "width", "height", "formats"],
+        },
+      },
+    })) as {
+      documentId: string;
+      name: string;
+      lat: number | string;
+      lng: number | string;
+      description: string | null;
+      current_status: SpringStatus;
+      status_updated_at: string | null;
+      photo?: {
+        url: string;
+        alternativeText?: string | null;
+        width?: number | null;
+        height?: number | null;
+        formats?: Record<string, { url: string }> | null;
+      } | null;
+    } | null;
+
+    if (!spring) {
+      return null;
+    }
+
+    const photo = spring.photo
+      ? {
+          url: spring.photo.url,
+          alternativeText: spring.photo.alternativeText ?? null,
+          width: spring.photo.width ?? null,
+          height: spring.photo.height ?? null,
+          // A small format for share cards / OG images, when available.
+          thumbnail_url: spring.photo.formats?.thumbnail?.url ?? null,
+        }
+      : null;
+
+    // Required in the schema → always present. Optional → null when unset.
+    return {
+      documentId: spring.documentId,
+      name: spring.name,
+      lat: spring.lat,
+      lng: spring.lng,
+      current_status: spring.current_status,
+      status_updated_at: spring.status_updated_at ?? null,
+      description: spring.description ?? null,
+      photo,
+    };
+  },
+
+  /**
    * ČHMÚ sync — upserts spring stations in all configured locales and appends
    * a fresh discharge report when ČHMÚ has newer data, then denormalizes via
    * refreshLatest.

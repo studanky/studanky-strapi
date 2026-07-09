@@ -26,6 +26,12 @@ export default {
       config: { auth: false }, // public read
     },
     {
+      method: "GET",
+      path: "/springs/:documentId/preview",
+      handler: "spring.preview",
+      config: { auth: false }, // public read — web share/preview page
+    },
+    {
       method: "POST",
       path: "/springs/sync-chmu",
       handler: "spring.syncChmu",

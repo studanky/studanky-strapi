@@ -35,7 +35,9 @@ The MVP read surface is **public — no token required**:
 | Endpoint | Auth |
 |---|---|
 | `GET /api/springs/map` | none (route is `auth:false`) |
+| `GET /api/springs/search` | none (route is `auth:false`) |
 | `GET /api/springs/:documentId/reports` | none (route is `auth:false`) |
+| `GET /api/springs/:documentId/preview` | none (route is `auth:false`) |
 | `GET /api/springs/:documentId` | none — but operator must enable `spring.findOne` for the **Public** role |
 | `GET /api/platform-config` | none — but operator must enable `platform-config.find` for the **Public** role |
 | `POST /api/springs/sync-chmu` | **API token** (ops‑only, not for the app) |
@@ -43,10 +45,10 @@ The MVP read surface is **public — no token required**:
 > ⚠️ Two of the endpoints the app relies on (`GET /api/springs/:documentId` and
 > `GET /api/platform-config`) are **Strapi core handlers** gated by role
 > permissions. They return `403 Forbidden` until an operator enables them for the
-> Public role in **Settings → Users & Permissions → Roles → Public**. The two
-> custom endpoints (`/map`, `/reports`) are always open. If you get a 403 on
-> detail/config in a fresh environment, that's the cause — flag it to the backend
-> operator, it is not a client bug.
+> Public role in **Settings → Users & Permissions → Roles → Public**. The custom
+> endpoints (`/map`, `/search`, `/reports`, `/preview`) are always open. If you
+> get a 403 on detail/config in a fresh environment, that's the cause — flag it to
+> the backend operator, it is not a client bug.
 
 ### Identifiers — `documentId`
 
@@ -78,8 +80,9 @@ not permitted, `404` unknown `documentId`.
 
 This API mixes **two** response shapes. Don't assume one:
 
-- **Custom endpoints** (`/map`, `/reports`) return a **flat, hand‑built payload** —
-  the objects are plain (no Strapi `attributes` nesting), e.g. `data[i].name`.
+- **Custom endpoints** (`/map`, `/search`, `/reports`, `/preview`) return a
+  **flat, hand‑built payload** — the objects are plain (no Strapi `attributes`
+  nesting), e.g. `data[i].name` (or `data.name` for the single‑object `/preview`).
 - **Core endpoints** (`/springs/:documentId`, `/platform-config`) return the
   **standard Strapi v5 shape** — `{ data, meta }`, fields flattened onto `data`,
   and **relations/media/components are not included unless you `populate`** them.
@@ -187,7 +190,51 @@ Missing or non‑numeric `bbox` → **`400`**. An empty box returns `{ "data": [
   [§4.1](#41-three-state-icon-teče--neteče--stale). The "stale" state is **computed
   on the client**, the server never returns it as a fourth value.
 
-### 3.2 `GET /api/springs/:documentId`
+### 3.2 `GET /api/springs/search`
+
+Name **autocomplete** for the map search box: the user types, picks a result,
+and the client flies the map to its `lat`/`lng`. Returns the **same map‑safe
+fields as `/map`** (so a hit is renderable as a marker immediately) — no history,
+no private data. Serves **published** rows in the requested locale.
+
+**Query**
+
+| Param | Required | Default | Notes |
+|---|---|---|---|
+| `q` | yes | — | search text; **min 2 chars** (else `400`) |
+| `lat`, `lng` | no | — | origin (user GPS or map centre); when both valid → nearest‑first + `distance_m` |
+| `limit` | no | `10` | clamped to **50** |
+| `locale` | no | i18n default | which localized `name` to search / return |
+
+Match is **case‑insensitive and accent‑insensitive** and partial (e.g. `ostruzna`
+matches `Ostružná`). With a valid `lat`/`lng` origin, results are ordered
+**nearest‑first** and each carries a rounded `distance_m` (metres, haversine);
+without an origin they are alphabetical by `name`. Broad queries are capped at
+200 candidates before the distance sort.
+
+**Response 200** (flat objects; `distance_m` only when an origin was given)
+
+```jsonc
+{
+  "data": [
+    {
+      "documentId": "k9f2a7b3c1d0e8",
+      "name": "Ostružná",
+      "lat": 50.18,
+      "lng": 17.05,
+      "current_status": "is_flowing",
+      "status_updated_at": "2026-05-31T05:00:00.000Z",
+      "distance_m": 2310
+    }
+  ]
+}
+```
+
+As with `/map`, `source_type` is intentionally **not** returned; compute the
+three‑state icon client‑side from `current_status` + `status_updated_at` (see
+[§4.1](#41-three-state-icon-teče--neteče--stale)).
+
+### 3.3 `GET /api/springs/:documentId`
 
 Full spring detail (core handler — requires Public `spring.findOne`). Use it for
 the detail screen header (name, description, photo, owner, coordinates).
@@ -225,7 +272,7 @@ GET /api/springs/k9f2a7b3c1d0e8?populate[photo]=true&populate[owner]=true&locale
 > You can read most header data straight from the marker you already have; fetch
 > the detail when the user opens a spring (cheaper than over‑populating the map).
 
-### 3.3 `GET /api/springs/:documentId/reports`
+### 3.4 `GET /api/springs/:documentId/reports`
 
 Paginated report **history** for the detail screen (spec §4.1 lazy loading). Always
 public. Returns an explicit **public field allowlist** only.
@@ -270,7 +317,60 @@ Sorted **newest first** (`reported_at` desc).
 - `flow_rate_lps` is a **confirming, secondary** number ("measured, not a guess");
   surface it next to the 1–5 scale when present.
 
-### 3.4 `GET /api/platform-config`
+### 3.5 `GET /api/springs/:documentId/preview`
+
+Minimal **share/preview** payload for the **web** — the deep‑link fallback when a
+spring is shared with someone who has **no app installed**. The web renders the
+basics and links to the app for the full detail. **Not used by the Flutter
+client** (which has the richer detail + history); documented here for
+completeness. Serves the **published** row in the requested locale.
+
+**Teaser boundary** (spec §3, §11): returns only fields that live directly on the
+Spring object and **deliberately withholds** the flow **strength**
+(`last_flow_scale` / `last_flow_rate_lps`), water clarity/odor and the **report
+history** — those stay app‑only. No server‑side staleness verdict either (the web
+shows the raw `status_updated_at`).
+
+**Query**
+
+| Param | Required | Default | Notes |
+|---|---|---|---|
+| `locale` | no | i18n default | which localized `name` / `description` to return |
+
+Unknown or unpublished `documentId` → **`404`**.
+
+**Field optionality mirrors the Spring schema**: `name`, `lat`, `lng` and
+`current_status` are **required** (always present); `status_updated_at`,
+`description` and `photo` are **optional** — `null` when unset. `photo` is
+expected to be `null` for now (not yet populated); the web handles missing values.
+
+**Response 200** (single flat object under `data`)
+
+```jsonc
+{
+  "data": {
+    "documentId": "k9f2a7b3c1d0e8",
+    "name": "Ostružná",
+    "lat": 50.18,
+    "lng": 17.05,
+    "current_status": "is_flowing",
+    "status_updated_at": "2026-05-31T05:00:00.000Z",
+    "description": "Studánka u modré značky…",
+    "photo": {
+      "url": "https://…/uploads/ostruzna.jpg",
+      "alternativeText": null,
+      "width": 1600,
+      "height": 1200,
+      "thumbnail_url": "https://…/uploads/thumbnail_ostruzna.jpg"
+    }
+  }
+}
+```
+
+`photo` is `null` when no image is set; `description` / `status_updated_at`
+likewise. Full contract in [Public API](./public-api.md#get-apispringsdocumentidpreviewlocalecs).
+
+### 3.6 `GET /api/platform-config`
 
 Dynamic parameters the client **downloads, caches, and uses to compute state
 itself** (spec §7.2). Single type (core handler — requires Public
@@ -304,7 +404,7 @@ GET /api/platform-config?populate[flow_scale_ranges]=true
 foreground), cache it, and feed it into the freshness and flow‑scale logic below.
 The values shown are illustrative — read the live ranges, never hardcode them.
 
-### 3.5 `POST /api/springs/sync-chmu` — ops only (not for the app)
+### 3.7 `POST /api/springs/sync-chmu` — ops only (not for the app)
 
 Manually triggers the ČHMÚ import (same logic as the nightly **03:30 Europe/Prague**
 cron). **Requires an admin API token**; not part of the client flow. Documented
@@ -390,9 +490,11 @@ concern; the API exposes no potability field by design.
 | Spec feature | Endpoint(s) | Client work |
 |---|---|---|
 | Map of springs in viewport, clustering | `GET /springs/map?bbox=` | client‑side clustering, re‑query on pan/zoom |
+| Search box → fly map to a spring | `GET /springs/search?q=&lat=&lng=` | accent‑insensitive; nearest‑first with origin |
 | Three‑state icon (teče/neteče/stale) | `…/map` + `GET /platform-config` | compute stale via threshold ([§4.1](#41-three-state-icon-teče--neteče--stale)) |
 | Spring detail (name, description, photo) | `GET /springs/:documentId?populate=…` | render header |
 | Report history, lazy loading | `GET /springs/:documentId/reports?page=` | infinite scroll on `pageCount` |
+| Web share preview (recipient has no app) | `GET /springs/:documentId/preview` | **web only** — teaser fields, link to app install |
 | Concrete age of last record | any of the above | format `status_updated_at` / `reported_at` |
 | Measured l/s as confirming value | `…/reports` (`flow_rate_lps`) | show beside 1–5 scale |
 | Dynamic freshness threshold & flow table | `GET /platform-config?populate=flow_scale_ranges` | cache, feed into [§4](#4-client-side-logic) |
@@ -444,8 +546,10 @@ is live.**
 
 ```text
 GET  /api/springs/map?bbox=minLng,minLat,maxLng,maxLat        → { data: [marker] }            public
+GET  /api/springs/search?q=ostr&lat=&lng=&limit=10&locale=cs  → { data: [marker(+distance_m)] } public
 GET  /api/springs/:documentId?populate[photo]=true&locale=cs  → { data: spring, meta }         public*
 GET  /api/springs/:documentId/reports?page=1&pageSize=20      → { data: [report], meta }       public
+GET  /api/springs/:documentId/preview?locale=cs               → { data: preview }              public (web)
 GET  /api/platform-config?populate[flow_scale_ranges]=true    → { data: config, meta }         public*
 POST /api/springs/sync-chmu                                   → { data: stats }                API token (ops)
 

@@ -71,6 +71,29 @@ export default factories.createCoreController(SPRING_UID, ({ strapi }) => ({
   },
 
   /**
+   * GET /api/springs/:documentId/preview?locale=
+   * Minimal public "share" payload for the web preview page (deep-link fallback
+   * when the recipient has no app). Teaser fields only — flow strength and
+   * report history are intentionally withheld. Logic lives in the service.
+   */
+  async preview(ctx) {
+    await this.validateQuery(ctx);
+
+    const { documentId } = ctx.params;
+    const { locale } = ctx.query;
+
+    const data = await strapi
+      .service(SPRING_UID)
+      .preview(documentId, typeof locale === "string" ? locale : undefined);
+
+    if (!data) {
+      return ctx.notFound("Spring not found");
+    }
+
+    return { data };
+  },
+
+  /**
    * POST /api/springs/sync-chmu
    * Manual trigger for the ČHMÚ sync (ops). Authenticated — call with an admin
    * API token; the scheduled cron uses the same service.
