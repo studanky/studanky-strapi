@@ -13,6 +13,7 @@ import {
 import { mapWithConcurrency } from "../../../utils/concurrency";
 import { haversineMeters, isValidOrigin } from "../../../utils/geo";
 import { normalizeSearchText } from "../../../utils/search";
+import { resolvePreviewLocales } from "../../../utils/locale";
 
 const SPRING_UID = "api::spring.spring";
 
@@ -37,6 +38,24 @@ interface LatestReport {
 
 interface I18nLocale {
   code: string;
+}
+
+/** The published Spring row shape read by `preview` (teaser fields only). */
+interface SpringPreviewRow {
+  documentId: string;
+  name: string;
+  lat: number | string;
+  lng: number | string;
+  description: string | null;
+  current_status: SpringStatus;
+  status_updated_at: string | null;
+  photo?: {
+    url: string;
+    alternativeText?: string | null;
+    width?: number | null;
+    height?: number | null;
+    formats?: Record<string, { url: string }> | null;
+  } | null;
 }
 
 /** Resolves the configured default locale dynamically (falls back to en). */
@@ -318,51 +337,63 @@ export default factories.createCoreService(SPRING_UID, ({ strapi }) => ({
    * `description` and `photo` are optional (null when unset — the web handles
    * missing values, notably the not-yet-sent photo).
    *
-   * Reads the published, requested-locale row. Returns null when no published
-   * spring exists for that documentId/locale → the controller answers 404.
+   * Locale fallback: a shared web link must not die because of language. We
+   * build an ordered attempt list with `resolvePreviewLocales` — the requested
+   * locale (only if it is actually configured) then the default locale — and
+   * query each until one hits. So an unsupported/garbage locale from a share URL
+   * is never passed to the Document Service (behaviour never depends on how it
+   * reacts to an unknown locale), and a spring published only in the default
+   * locale is still served. Only a spring missing/unpublished in the DEFAULT
+   * locale too yields null → the controller answers 404. The actually served
+   * locale is returned as `locale` so the web knows which language it got.
    */
   async preview(documentId: string, locale?: string) {
     if (!documentId) {
       return null;
     }
 
-    const resolvedLocale = locale || (await getDefaultLocale(strapi));
+    const [defaultLocale, configured] = await Promise.all([
+      getDefaultLocale(strapi),
+      getConfiguredLocales(strapi),
+    ]);
+    const attempts = resolvePreviewLocales({
+      requested: locale,
+      defaultLocale,
+      configured,
+    });
 
-    const spring = (await strapi.documents(SPRING_UID).findOne({
-      documentId,
-      status: "published",
-      locale: resolvedLocale,
-      // Spring-object fields only — NO flow strength (last_flow_scale /
-      // last_flow_rate_lps) and NO report history; those stay app-only.
-      fields: [
-        "name",
-        "lat",
-        "lng",
-        "description",
-        "current_status",
-        "status_updated_at",
-      ],
-      populate: {
-        photo: {
-          fields: ["url", "alternativeText", "width", "height", "formats"],
+    const queryPreview = (loc: string) =>
+      strapi.documents(SPRING_UID).findOne({
+        documentId,
+        status: "published",
+        locale: loc,
+        // Spring-object fields only — NO flow strength (last_flow_scale /
+        // last_flow_rate_lps) and NO report history; those stay app-only.
+        fields: [
+          "name",
+          "lat",
+          "lng",
+          "description",
+          "current_status",
+          "status_updated_at",
+        ],
+        populate: {
+          photo: {
+            fields: ["url", "alternativeText", "width", "height", "formats"],
+          },
         },
-      },
-    })) as {
-      documentId: string;
-      name: string;
-      lat: number | string;
-      lng: number | string;
-      description: string | null;
-      current_status: SpringStatus;
-      status_updated_at: string | null;
-      photo?: {
-        url: string;
-        alternativeText?: string | null;
-        width?: number | null;
-        height?: number | null;
-        formats?: Record<string, { url: string }> | null;
-      } | null;
-    } | null;
+      }) as Promise<SpringPreviewRow | null>;
+
+    let spring: SpringPreviewRow | null = null;
+    let servedLocale = defaultLocale;
+    for (const loc of attempts) {
+      const row = await queryPreview(loc);
+      if (row) {
+        spring = row;
+        servedLocale = loc;
+        break;
+      }
+    }
 
     if (!spring) {
       return null;
@@ -389,6 +420,7 @@ export default factories.createCoreService(SPRING_UID, ({ strapi }) => ({
       status_updated_at: spring.status_updated_at ?? null,
       description: spring.description ?? null,
       photo,
+      locale: servedLocale,
     };
   },
 

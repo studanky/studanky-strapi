@@ -323,7 +323,8 @@ Minimal **share/preview** payload for the **web** — the deep‑link fallback w
 spring is shared with someone who has **no app installed**. The web renders the
 basics and links to the app for the full detail. **Not used by the Flutter
 client** (which has the richer detail + history); documented here for
-completeness. Serves the **published** row in the requested locale.
+completeness. Serves a **published** row, in the requested locale when possible
+(see **Locale fallback** below).
 
 **Teaser boundary** (spec §3, §11): returns only fields that live directly on the
 Spring object and **deliberately withholds** the flow **strength**
@@ -335,14 +336,19 @@ shows the raw `status_updated_at`).
 
 | Param | Required | Default | Notes |
 |---|---|---|---|
-| `locale` | no | i18n default | which localized `name` / `description` to return |
+| `locale` | no | i18n default | preferred language for `name` / `description` (falls back — see below) |
 
-Unknown or unpublished `documentId` → **`404`**.
+**Locale fallback**: a shared link must not die on language. The requested
+`locale` is tried first, then the **default locale** if it misses (unsupported
+locale, or the spring not yet published in that language). A **`404`** means the
+spring is missing/unpublished in the default locale too. The response echoes the
+**served** `locale`, which may differ from the requested one after a fallback.
 
-**Field optionality mirrors the Spring schema**: `name`, `lat`, `lng` and
-`current_status` are **required** (always present); `status_updated_at`,
-`description` and `photo` are **optional** — `null` when unset. `photo` is
-expected to be `null` for now (not yet populated); the web handles missing values.
+**Field optionality mirrors the Spring schema**: `name`, `lat`, `lng`,
+`current_status` and `locale` are **required** (always present);
+`status_updated_at`, `description` and `photo` are **optional** — `null` when
+unset. `photo` is expected to be `null` for now (not yet populated); the web
+handles missing values.
 
 **Response 200** (single flat object under `data`)
 
@@ -362,13 +368,15 @@ expected to be `null` for now (not yet populated); the web handles missing value
       "width": 1600,
       "height": 1200,
       "thumbnail_url": "https://…/uploads/thumbnail_ostruzna.jpg"
-    }
+    },
+    "locale": "cs"
   }
 }
 ```
 
 `photo` is `null` when no image is set; `description` / `status_updated_at`
-likewise. Full contract in [Public API](./public-api.md#get-apispringsdocumentidpreviewlocalecs).
+likewise. `locale` is the served language (may differ from the requested one on
+fallback). Full contract in [Public API](./public-api.md#get-apispringsdocumentidpreviewlocalecs).
 
 ### 3.6 `GET /api/platform-config`
 

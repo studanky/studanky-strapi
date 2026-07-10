@@ -100,18 +100,25 @@ the app for more.
 
 No server-side freshness/staleness verdict: the web just shows the raw
 `status_updated_at` and lets the reader judge (the tri-state "stale" rule stays a
-client concern, as on `/map` and `/search`). Reads the **published**,
-requested-locale row; unknown/unpublished `documentId` → `404`.
+client concern, as on `/map` and `/search`).
 
 | Param | Required | Default | Notes |
 |---|---|---|---|
 | `locale` | no | i18n default | which localized `name` / `description` to return |
 
-Field optionality mirrors the Spring schema: `name`, `lat`, `lng` and
-`current_status` are **required** (always present); `status_updated_at`,
-`description` and `photo` are **optional** — `null` when unset. `photo` is
-especially expected to be `null` for now (not yet populated); the web handles
-missing values.
+**Locale fallback (share links must not die on language).** Reads the
+**published** row in the requested locale, but if that misses — an unsupported
+locale, or a spring **not yet published in that language** — it falls back to the
+**default locale** rather than 404-ing. A `404` means the spring is
+missing/unpublished in the default locale too. The response echoes the
+**actually served** `locale` so the web knows which language it got (may differ
+from the requested one after a fallback).
+
+Field optionality mirrors the Spring schema: `name`, `lat`, `lng`,
+`current_status` and `locale` are **required** (always present);
+`status_updated_at`, `description` and `photo` are **optional** — `null` when
+unset. `photo` is especially expected to be `null` for now (not yet populated);
+the web handles missing values.
 
 ```jsonc
 // 200
@@ -120,9 +127,11 @@ missing values.
   "current_status": "is_flowing", "status_updated_at": "2026-05-31T05:00:00.000Z",
   "description": "Studánka u modré značky…",
   "photo": { "url": "https://…/spring.jpg", "alternativeText": null,
-             "width": 1600, "height": 1200, "thumbnail_url": "https://…/thumbnail_spring.jpg" }
+             "width": 1600, "height": 1200, "thumbnail_url": "https://…/thumbnail_spring.jpg" },
+  "locale": "cs"
 } }
 // photo is null when no image is set; description/status_updated_at likewise.
+// locale is the served language — may differ from the requested one on fallback.
 ```
 
 ## Privacy
