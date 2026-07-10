@@ -18,6 +18,7 @@ is kept as a safe no-op for migration-history stability.
 | `springs` | `(status_updated_at)` | index | freshness / sorting |
 | `reports` | `(client_report_id)` | **UNIQUE** | offline-queue idempotence |
 | `reports` | `(reported_at)` | index | history sorting |
+| `newsletter_subscribers` | `(email_normalized)` | **UNIQUE** | newsletter subscribe idempotence / duplicate protection |
 
 ## Why springs pairing is NOT a unique index
 
@@ -44,3 +45,11 @@ index permits multiple `NULL`s (ČHMÚ reports carry no `client_report_id`).
 
 Not added here — already indexed via Strapi's relation link table
 (`reports_spring_lnk`).
+
+## Why newsletter `email_normalized` IS a unique index
+
+Newsletter Subscriber has Draft & Publish disabled → one row per subscriber. The
+public subscribe endpoint normalizes emails (`trim` + lowercase copy in
+`email_normalized`) and performs an idempotent create/update. The DB UNIQUE index
+is still required as a hard guarantee when two subscribe requests for the same
+email arrive concurrently.

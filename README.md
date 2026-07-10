@@ -10,11 +10,13 @@ Built with [Strapi v5](https://strapi.io) and TypeScript.
 - **ČHMÚ sync** — nightly cron + manual endpoint imports spring discharge data
 - **Denormalized map status** — cached current status for a cheap map endpoint
 - **Public read API** — `/springs/map` (bbox) and `/springs/:documentId/reports`
+- **Newsletter signup** — isolated public write endpoint for collecting launch interest
 - **QR Codes** — Auto-generated for each spring (encode `documentId`)
 - **Manager Access Control** — admin users see only springs they manage
 
-> The MVP is read-only ČHMÚ data — there is no public write endpoint. Community
-> report submission (HMAC, geo-fence, rate limiting) is **Phase 2**; see
+> The app-facing MVP is read-only ČHMÚ data; community report submission (HMAC,
+> geo-fence, rate limiting) is **Phase 2**. The only current public write is the
+> isolated newsletter signup endpoint for the website; see
 > [API Security](./docs/api-security.md).
 
 ## 🚀 Getting Started

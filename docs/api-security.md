@@ -2,21 +2,24 @@
 
 ## Current state (MVP)
 
-The MVP backend is **read-only ČHMÚ data** (spec §11): there is **no public write
-endpoint**. The public surface is:
+The app-facing MVP backend is **read-only ČHMÚ data** (spec §11): there is no
+public report write endpoint. The public surface is:
 
 - `GET /api/springs/map` — public read ([Public API](./public-api.md))
 - `GET /api/springs/search` — public read, map-safe fields only
 - `GET /api/springs/:documentId/reports` — public read (private fields never exposed)
 - `GET /api/springs/:documentId/preview` — public read, teaser subset (no flow strength / history)
 - `GET /api/springs/:documentId`, `GET /api/platform-config` — core reads (enable per Public RBAC)
+- `POST /api/newsletter/subscribe` — public write-only, idempotent newsletter signup
 - `POST /api/springs/sync-chmu` — **authenticated** (admin API token), ops-only
 
 Admin Panel access is scoped by the [manager middleware](./admin-filtering.md).
 Capture coordinates are private and additionally excluded from the history
 allowlist (GDPR, spec §9.2). There is **no report-submit endpoint and no HMAC
 policy in the MVP** — they were removed as premature; the design below is the
-plan for when submission ships in Phase 2.
+plan for when submission ships in Phase 2. Newsletter signup is the only MVP
+public write endpoint and is deliberately limited to storing contact interest,
+not application state.
 
 ### MVP hardening checklist (ops)
 
@@ -25,6 +28,15 @@ plan for when submission ships in Phase 2.
 - **Report writes stay closed in the MVP**: public clients read reports only via
   `GET /api/springs/:documentId/reports`. Never enable `report.update` or
   `report.delete`; reports are append-only observations.
+- **Newsletter Subscriber CRUD stays closed**: core content API routes are
+  disabled; expose only `POST /api/newsletter/subscribe`.
+- **Newsletter anti-spam baseline**: keep the endpoint idempotent, maintain the
+  DB UNIQUE index on `email_normalized`, keep the frontend honeypot field
+  `website`, validate a small payload allowlist and add an edge/reverse-proxy
+  rate limit for `/api/newsletter/subscribe` before launch.
+- **Escalation path for abuse**: if spam appears despite the baseline, add
+  Cloudflare Turnstile or a similar challenge to the website form before
+  hardening the Strapi endpoint further.
 - **CORS**: restrict `config/middlewares.ts` `strapi::cors` `origin` to the app's
   domains in production (default is permissive).
 - **`sync-chmu`**: keep authenticated (admin API token only); consider a

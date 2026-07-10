@@ -1,9 +1,10 @@
 # Public API — Custom Endpoints
 
-Custom read endpoints for the mobile/web client. Thin controllers, logic in
-services. Defined in `src/api/spring/routes/01-spring-custom.ts` — the `01-`
-prefix ensures they load **before** the core router (otherwise `/springs/map`
-would be captured by core `/springs/:documentId`).
+Custom endpoints for the mobile/web clients. Thin controllers, logic in
+services. Spring endpoints are defined in `src/api/spring/routes/01-spring-custom.ts`
+— the `01-` prefix ensures they load **before** the core router (otherwise
+`/springs/map` would be captured by core `/springs/:documentId`). Newsletter
+signup lives in `src/api/newsletter-subscriber/routes/01-newsletter-subscribe.ts`.
 
 | Method | Path | Handler | Auth | Purpose |
 |---|---|---|---|---|
@@ -12,6 +13,7 @@ would be captured by core `/springs/:documentId`).
 | GET | `/api/springs/:documentId/reports` | `spring.reports` | public | paginated report history |
 | GET | `/api/springs/:documentId/preview` | `spring.preview` | public | minimal share/preview payload (deep-link web fallback) |
 | POST | `/api/springs/sync-chmu` | `spring.syncChmu` | API token | manual ČHMÚ sync ([docs](./chmu-sync.md)) |
+| POST | `/api/newsletter/subscribe` | `newsletter-subscriber.subscribe` | public | idempotent newsletter signup |
 
 > Core `GET /api/springs/:documentId` (single spring) and `GET /api/platform-config`
 > remain the default core handlers — enable them for the Public role via admin RBAC.
@@ -140,3 +142,40 @@ Capture coordinates (`user_lat`, `user_lng`) are marked **private** on the Repor
 model and are additionally **never selected** by `history` — they cannot leak
 through these endpoints regardless of model config. `device_id` is likewise not
 exposed. (GDPR / spec §9.2.)
+
+## `POST /api/newsletter/subscribe`
+
+Public, write-only newsletter signup for the separate website / launch page.
+This endpoint is intentionally isolated from the spring/report API surface and
+does **not** expose core `newsletter-subscriber` CRUD routes.
+
+```jsonc
+// request
+{
+  "email": "user@example.com",
+  "consent": true,
+  "source": "website-footer",
+  "preferredLanguage": "cs",
+  "consentVersion": "2026-07-10",
+  "sourceUrl": "https://example.com/"
+}
+```
+
+Accepted aliases: `preferred_language` or `preferredLanguage`,
+`consent_version` or `consentVersion`, `source_url` or `sourceUrl`.
+
+The frontend should also include a hidden honeypot field named `website`. Real
+users leave it empty; if a bot fills it, the server returns a neutral success
+without storing anything.
+
+```jsonc
+// 200
+{ "data": { "ok": true } }
+```
+
+Validation errors return `400` (`email` invalid, `consent !== true`, invalid
+`sourceUrl`). Duplicate submissions are idempotent: the server normalizes the
+email into private `email_normalized`, reuses the existing subscriber when found,
+reactivates `unsubscribed` / `bounced` contacts on fresh consent, and always
+returns the same neutral success response so callers cannot enumerate stored
+emails.

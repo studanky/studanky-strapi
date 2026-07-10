@@ -36,6 +36,12 @@ const INDEXES: IndexSpec[] = [
     columns: ["reported_at"],
     name: "reports_reported_at_idx",
   },
+  {
+    table: "newsletter_subscribers",
+    columns: ["email_normalized"],
+    name: "newsletter_subscribers_email_normalized_uq",
+    unique: true,
+  },
 ];
 
 const rowsFromRaw = (result: unknown): unknown[] => {
