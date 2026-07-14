@@ -20,6 +20,30 @@ const syncNameSearch = (data: Record<string, unknown>) => {
 };
 
 /**
+ * Decides whether the `afterCreate` hook should generate a QR code for the row
+ * that just got created. Pure + unit-tested (see tests/unit/spring-qr.test.ts).
+ *
+ * A Spring needs exactly ONE QR for its lifetime — the content is the immutable
+ * `documentId`, so it never needs regenerating. But Strapi v5 fires `afterCreate`
+ * for EVERY row creation, not just a genuine new document:
+ *   - `documents().publish()` clones the draft into a fresh published row
+ *     (publish → entries.publish → createEntry → db.query().create), and re-runs
+ *     on every nightly ČHMÚ sync. These clones carry `publishedAt`.
+ *   - `discardDraft` re-creates the draft row.
+ * Publish also deep-populates and clones the draft's `qr_code` relation onto the
+ * published row, so generating only on the genuine draft creation is enough — the
+ * published row inherits the same file automatically.
+ */
+export function shouldGenerateQr(args: {
+  publishedAt: unknown; // event.params.data.publishedAt
+  hasExistingQr: boolean; // the document already has a linked qr_code
+}): boolean {
+  if (args.publishedAt) return false; // published-row clone (publish / re-publish)
+  if (args.hasExistingQr) return false; // idempotent (discardDraft, re-create)
+  return true; // genuine draft creation without a QR yet
+}
+
+/**
  * Lifecycle hooks for the Spring content type.
  *
  * Automatically generates a QR code containing the documentId when a new
@@ -36,15 +60,42 @@ export default {
   },
 
   async afterCreate(event: {
-    result: { id: number; documentId: string; qr_code?: unknown };
+    result: { id: number; documentId: string; locale?: string };
     params: { data: Record<string, unknown> };
   }) {
-    const { result } = event;
-    const { id, documentId, qr_code } = result;
+    const { result, params } = event;
+    const { id, documentId } = result;
 
-    // Prevent infinite loop: skip if qr_code is already set
-    // This can happen if the upload service triggers another lifecycle event
-    if (qr_code) {
+    // Fast path: skip published-row clones without touching the DB. `publish()`
+    // (and every nightly re-publish) creates a published row whose create data
+    // carries `publishedAt` — it must NOT regenerate the QR. This is the hot path
+    // (~one publish per spring per sync run).
+    if (params?.data?.publishedAt) {
+      return;
+    }
+
+    // Idempotency is decided against the DOCUMENT, not `event.result`: media
+    // relations are never populated onto the lifecycle result, so the old
+    // `if (result.qr_code)` guard never fired. Query the draft row's qr_code.
+    //
+    // Use `db.query` (NOT the Document Service) so this internal consistency
+    // check bypasses the Spring admin-scoping middleware (`spring-scope.ts`): in
+    // an admin request context that middleware would AND a `managers` filter onto
+    // findOne and could hide an existing QR, causing a spurious regeneration.
+    // Same internal-path pattern the ČHMÚ sync already uses (spring.ts).
+    const locale =
+      result.locale ?? (params?.data?.locale as string | undefined);
+    const draft = (await strapi.db.query(SPRING_UID).findOne({
+      where: { documentId, publishedAt: null, ...(locale ? { locale } : {}) },
+      populate: { qr_code: true },
+    })) as { qr_code?: unknown } | null;
+
+    if (
+      !shouldGenerateQr({
+        publishedAt: params?.data?.publishedAt,
+        hasExistingQr: Boolean(draft?.qr_code),
+      })
+    ) {
       strapi.log.debug(
         `Spring ${documentId}: QR code already exists, skipping generation`
       );

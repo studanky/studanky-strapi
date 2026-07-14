@@ -30,7 +30,10 @@ the content type.
 
 **Location:** `src/api/spring/content-types/spring/lifecycles.ts`
 
-When a new Spring entry is created, a QR code is automatically generated and uploaded to the Media Library.
+When a new Spring **document** is created, a QR code is generated once and
+uploaded to the Media Library. A Spring needs exactly **one** QR for its
+lifetime — the encoded value is the immutable `documentId`, so it never needs
+regenerating.
 
 #### Trigger
 
@@ -41,13 +44,47 @@ When a new Spring entry is created, a QR code is automatically generated and upl
 
 1. Generates a QR code image (512×512 PNG) containing the Spring's `documentId`
 2. Uploads the image to Strapi's Media Library
-3. Links the uploaded file to the Spring's `qr_code` field
+3. Links the uploaded file to the **draft** Spring row's `qr_code` field
+
+`publish()` deep-populates and clones the draft's `qr_code` relation onto the
+published row automatically (same `file_id`, no duplicate asset), so linking only
+the draft is enough.
+
+#### Fire-once guard (important)
+
+Strapi v5 fires `afterCreate` for **every row creation**, not just a genuine new
+document. In particular `documents().publish()` clones the draft into a fresh
+published row (`publish` → `entries.publish` → `createEntry` → `db.query().create`),
+and the ČHMÚ sync re-publishes every Spring on every nightly run. Without a guard
+this regenerated the QR on **every publish**, orphaning the previous file in the
+Media Library (historically ~2500 orphans for ~85 springs).
+
+The hook therefore generates only on a genuine **draft** creation, decided by the
+pure `shouldGenerateQr({ publishedAt, hasExistingQr })` helper
+(unit-tested in `tests/unit/spring-qr.test.ts`):
+
+- **Publish / re-publish** → the create data carries `publishedAt` → **skip**
+  (fast path, no DB read; this is the hot path, ~one publish per spring per sync).
+- **Document already has a QR** (`discardDraft`, re-create) → **skip**. Idempotency
+  is checked against the draft row's `qr_code`, queried with
+  `strapi.db.query(SPRING_UID).findOne({ where: { documentId, publishedAt: null, locale }, populate: { qr_code: true } })`
+  — **not** `event.result` (media relations are never populated onto the lifecycle
+  result, which is why the earlier `if (result.qr_code)` guard never fired). It
+  deliberately uses `db.query`, not the Document Service, so this internal check
+  bypasses the Spring admin-scoping middleware (`spring-scope.ts`): a request-scoped
+  `managers` filter must never hide an existing QR and cause a spurious regeneration.
+- **Genuine draft creation without a QR** → generate.
 
 #### QR Code Content
 
 The QR code encodes the **`documentId`** — Strapi v5's immutable document identifier. This ensures the QR content remains permanent even if the Spring's name or other metadata changes.
 
 Example content when scanned: `g39qdkl2c0ptrpl081d8kcvd`
+
+> Phase 2: the printed (stainless) QR is planned to carry a signed deeplink URL
+> (`HMAC(documentId, SERVER_SECRET)`, see [API Security](./api-security.md)),
+> decided before physical codes are printed. The current bare-`documentId`
+> content is unchanged by the fire-once fix.
 
 #### Configuration
 
@@ -67,7 +104,39 @@ npm install qrcode @types/qrcode
 #### Error Handling
 
 - Errors during QR generation/upload are logged but do not block Spring creation
-- If `qr_code` already exists on the entry, generation is skipped (prevents infinite loops)
+
+#### Cleaning up historical orphans
+
+Orphaned QR assets created before the fire-once guard are removed by
+`scripts/ops/cleanup-qr-orphans.js` (an orphan = a `spring-qr-%` file with no
+`files_related_mph` link). Dry-run by default; `--apply` deletes via the upload
+service so S3/R2 objects go too:
+
+```bash
+npm run cleanup:qr-orphans            # dry-run: report only
+npm run cleanup:qr-orphans -- --apply # delete
+```
+
+Deploy the lifecycle fix **before** running it, otherwise the next nightly sync
+recreates fresh orphans.
+
+**Reaching one QR per spring takes two passes.** Legacy springs affected by the
+old bug have *two* still-linked QR files — the draft's and the current
+published's (different files, same encoded `documentId`). The orphan cleanup only
+removes *unlinked* files, so a single run right after deploy leaves those two in
+place. On the next fixed sync, `publish()` clones the draft's QR onto the new
+published row and deletes the old published row, orphaning its file; a **second
+cleanup run** then removes it, leaving one file per spring:
+
+1. Deploy the fix.
+2. `npm run cleanup:qr-orphans -- --apply` (removes the historical orphans).
+3. Let one nightly ČHMÚ sync run (or `npm run sync:chmu`).
+4. `npm run cleanup:qr-orphans -- --apply` again (removes the now-orphaned
+   legacy published files) → one QR per spring.
+
+The two-linked-files state is harmless in the meantime (both encode the same
+`documentId`); this only matters if you want a perfectly deduplicated Media
+Library. Springs created after the fix have exactly one file from the start.
 
 #### Logs
 
