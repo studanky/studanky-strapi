@@ -470,14 +470,10 @@ export interface ApiNewsletterSubscriberNewsletterSubscriber
       'api::newsletter-subscriber.newsletter-subscriber'
     > &
       Schema.Attribute.Private;
-    preferred_language: Schema.Attribute.String &
-      Schema.Attribute.Required &
-      Schema.Attribute.DefaultTo<'cs'>;
+    preferred_language: Schema.Attribute.String;
     publishedAt: Schema.Attribute.DateTime;
-    source: Schema.Attribute.String &
-      Schema.Attribute.Required &
-      Schema.Attribute.DefaultTo<'website'>;
-    source_url: Schema.Attribute.String;
+    source: Schema.Attribute.String;
+    source_ref: Schema.Attribute.Text;
     state: Schema.Attribute.Enumeration<
       ['pending', 'active', 'unsubscribed', 'bounced']
     > &

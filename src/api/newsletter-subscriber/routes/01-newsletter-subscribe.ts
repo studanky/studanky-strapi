@@ -5,7 +5,10 @@
  * routes are disabled in `newsletter-subscriber.ts`.
  */
 
-export default {
+import type { Core } from "@strapi/strapi";
+
+const routes: Core.RouterConfig = {
+  type: "content-api",
   routes: [
     {
       method: "POST",
@@ -15,3 +18,5 @@ export default {
     },
   ],
 };
+
+export default routes;

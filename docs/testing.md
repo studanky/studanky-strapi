@@ -26,11 +26,13 @@ npx vitest run -t "newest point"                 # by test name
 vitest.config.ts          # node environment, includes tests/**/*.test.ts
 tests/
   unit/
-  flow-scale.test.ts
-  concurrency.test.ts
-  chmu-client.test.ts
-  newsletter.test.ts
-  spring-scope.test.ts
+    flow-scale.test.ts
+    fixed-window-rate-limit.test.ts
+    concurrency.test.ts
+    chmu-client.test.ts
+    newsletter-controller.test.ts
+    newsletter.test.ts
+    spring-scope.test.ts
 ```
 
 Test files are named `*.test.ts` and live under `tests/`. The app `tsconfig.json`
@@ -41,9 +43,11 @@ Test files are named `*.test.ts` and live under `tests/`. The app `tsconfig.json
 | Test file | Unit under test | Notes |
 |---|---|---|
 | `flow-scale.test.ts` | `pickFlowScale` ([src/utils/flow-scale.ts](../src/utils/flow-scale.ts)) | range boundaries, out-of-range, null/NaN, empty ranges |
+| `fixed-window-rate-limit.test.ts` | `createFixedWindowRateLimiter` ([src/utils/fixed-window-rate-limit.ts](../src/utils/fixed-window-rate-limit.ts)) | per-key fixed windows, retry-after, max-key cap |
 | `concurrency.test.ts` | `mapWithConcurrency` ([src/utils/concurrency.ts](../src/utils/concurrency.ts)) | order preserved, limit never exceeded, empty input |
 | `chmu-client.test.ts` | `parseStations` / `parseLatestValue` / `recentMonths` ([chmu-client.ts](../src/api/spring/services/chmu-client.ts)) | spring filter, positional mapping, bad-coord skip, YD/L_S by name (not order), newest by `dt`, empty → null, month rollover |
-| `newsletter.test.ts` | newsletter subscribe helpers ([src/utils/newsletter.ts](../src/utils/newsletter.ts)) | email/source/language normalization, consent validation, honeypot, idempotent write merge |
+| `newsletter-controller.test.ts` | newsletter subscribe controller ([controller](../src/api/newsletter-subscriber/controllers/newsletter-subscriber.ts)) | 413 payload guard, 429 + `Retry-After`, honeypot precedence, no core REST `{ data }` envelope |
+| `newsletter.test.ts` | newsletter subscribe helpers ([src/utils/newsletter.ts](../src/utils/newsletter.ts)) | email/source/language normalization, optional metadata handling, locale validation, consent validation, honeypot, idempotent write merge |
 | `spring-scope.test.ts` | `resolveSpringScope` ([spring-scope.ts](../src/middlewares/document/spring-scope.ts)) | super-admin bypass, admin scoping, wrong uid/action, internal calls, **users-permissions not scoped (invariant #2)**, missing `roles[]` |
 
 ## Design: testable pure logic

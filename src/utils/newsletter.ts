@@ -1,13 +1,11 @@
-const DEFAULT_SOURCE = "website";
-const DEFAULT_PREFERRED_LANGUAGE = "cs";
 const EMAIL_MAX_LENGTH = 254;
 const SOURCE_MAX_LENGTH = 80;
 const PREFERRED_LANGUAGE_MAX_LENGTH = 32;
 const CONSENT_VERSION_MAX_LENGTH = 80;
-const SOURCE_URL_MAX_LENGTH = 2048;
+const SOURCE_REFERENCE_MAX_LENGTH = 2048;
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-const PREFERRED_LANGUAGE_RE = /^[a-z]{2,3}(-[a-z0-9]{2,8}){0,2}$/;
+const LOCALE_TAG_RE = /^[a-z]{2,3}(-[a-z0-9]{2,8}){0,3}$/i;
 
 type UnknownRecord = Record<string, unknown>;
 
@@ -21,17 +19,30 @@ export interface NewsletterSubscribeData {
   email: string;
   email_normalized: string;
   state: "active";
-  source: string;
-  preferred_language: string;
+  source?: string;
+  preferred_language?: string;
   consented_at: string;
   last_subscribed_at: string;
   consent_version?: string | null;
-  source_url?: string | null;
+  source_ref?: string | null;
 }
 
 export interface ExistingNewsletterSubscriber {
   state?: NewsletterSubscriberState | null;
   consented_at?: string | null;
+}
+
+export interface NewsletterSubscriberWriteData {
+  email: string;
+  email_normalized: string;
+  state: "active";
+  source?: string | null;
+  preferred_language?: string | null;
+  consented_at: string;
+  last_subscribed_at: string;
+  unsubscribed_at: null;
+  consent_version?: string | null;
+  source_ref?: string | null;
 }
 
 export type NewsletterSubscribeParseResult =
@@ -42,10 +53,7 @@ export type NewsletterSubscribeParseResult =
 const isRecord = (value: unknown): value is UnknownRecord =>
   Boolean(value) && typeof value === "object" && !Array.isArray(value);
 
-const optionalTrimmedString = (
-  value: unknown,
-  maxLength: number
-): string | undefined => {
+const optionalTrimmedString = (value: unknown): string | undefined => {
   if (typeof value !== "string") {
     return undefined;
   }
@@ -55,11 +63,16 @@ const optionalTrimmedString = (
     return undefined;
   }
 
-  return trimmed.slice(0, maxLength);
+  return trimmed;
+};
+
+const trimmedStringTooLong = (value: unknown, maxLength: number): boolean => {
+  const trimmed = optionalTrimmedString(value);
+  return trimmed != null && trimmed.length > maxLength;
 };
 
 export const normalizeNewsletterEmail = (value: unknown): string => {
-  return optionalTrimmedString(value, EMAIL_MAX_LENGTH) ?? "";
+  return optionalTrimmedString(value) ?? "";
 };
 
 export const isValidNewsletterEmail = (email: string): boolean => {
@@ -67,48 +80,38 @@ export const isValidNewsletterEmail = (email: string): boolean => {
 };
 
 export const normalizeNewsletterSource = (value: unknown): string => {
-  const raw = optionalTrimmedString(value, SOURCE_MAX_LENGTH)?.toLowerCase();
-  if (!raw) {
-    return DEFAULT_SOURCE;
-  }
-
-  const normalized = raw
-    .replace(/[^a-z0-9_-]+/g, "-")
-    .replace(/-+/g, "-")
-    .replace(/^[-_]+|[-_]+$/g, "");
-
-  return normalized || DEFAULT_SOURCE;
+  return optionalTrimmedString(value) ?? "";
 };
 
 export const normalizePreferredLanguage = (value: unknown): string => {
-  const raw = optionalTrimmedString(value, PREFERRED_LANGUAGE_MAX_LENGTH)
-    ?.toLowerCase()
-    .replace("_", "-");
-
-  if (!raw || !PREFERRED_LANGUAGE_RE.test(raw)) {
-    return DEFAULT_PREFERRED_LANGUAGE;
+  const raw = optionalTrimmedString(value)?.replace(/_/g, "-");
+  if (!raw) {
+    return "";
   }
 
-  return raw;
+  return raw
+    .split("-")
+    .map((part, index) => {
+      if (index === 0) {
+        return part.toLowerCase();
+      }
+      if (part.length === 2 || /^\d{3}$/.test(part)) {
+        return part.toUpperCase();
+      }
+      if (part.length === 4) {
+        return part[0].toUpperCase() + part.slice(1).toLowerCase();
+      }
+      return part.toLowerCase();
+    })
+    .join("-");
 };
 
-const normalizeSourceUrl = (
-  value: unknown
-): { value?: string | null; error?: string } => {
-  const raw = optionalTrimmedString(value, SOURCE_URL_MAX_LENGTH);
-  if (!raw) {
-    return { value: null };
-  }
+export const isValidPreferredLanguage = (value: string): boolean => {
+  return value.length > 0 && LOCALE_TAG_RE.test(value);
+};
 
-  try {
-    const url = new URL(raw);
-    if (url.protocol !== "http:" && url.protocol !== "https:") {
-      return { error: "sourceUrl must be an http(s) URL" };
-    }
-    return { value: url.toString().slice(0, SOURCE_URL_MAX_LENGTH) };
-  } catch {
-    return { error: "sourceUrl must be a valid URL" };
-  }
+export const normalizeNewsletterSourceReference = (value: unknown): string => {
+  return optionalTrimmedString(value) ?? "";
 };
 
 export const parseNewsletterSubscribeInput = (
@@ -120,7 +123,7 @@ export const parseNewsletterSubscribeInput = (
   }
 
   // Honeypot. Real users never fill this hidden field, simple bots often do.
-  if (optionalTrimmedString(input.website, 200)) {
+  if (optionalTrimmedString(input.website)) {
     return { type: "spam" };
   }
 
@@ -133,10 +136,35 @@ export const parseNewsletterSubscribeInput = (
     return { type: "invalid", message: "Invalid email" };
   }
 
-  const sourceUrl = normalizeSourceUrl(input.source_url ?? input.sourceUrl);
-  if (sourceUrl.error) {
-    return { type: "invalid", message: sourceUrl.error };
+  if (trimmedStringTooLong(input.source, SOURCE_MAX_LENGTH)) {
+    return { type: "invalid", message: "source is too long" };
   }
+  const source = normalizeNewsletterSource(input.source);
+
+  if (
+    trimmedStringTooLong(input.preferredLanguage, PREFERRED_LANGUAGE_MAX_LENGTH)
+  ) {
+    return { type: "invalid", message: "preferredLanguage is too long" };
+  }
+  const preferredLanguageRaw = optionalTrimmedString(
+    input.preferredLanguage
+  );
+  const preferredLanguage = normalizePreferredLanguage(
+    preferredLanguageRaw
+  );
+  if (preferredLanguageRaw != null && !isValidPreferredLanguage(preferredLanguage)) {
+    return { type: "invalid", message: "Invalid preferredLanguage" };
+  }
+
+  if (trimmedStringTooLong(input.sourceRef, SOURCE_REFERENCE_MAX_LENGTH)) {
+    return { type: "invalid", message: "sourceRef is too long" };
+  }
+  const sourceReference = normalizeNewsletterSourceReference(input.sourceRef);
+
+  if (trimmedStringTooLong(input.consentVersion, CONSENT_VERSION_MAX_LENGTH)) {
+    return { type: "invalid", message: "consentVersion is too long" };
+  }
+  const consentVersion = optionalTrimmedString(input.consentVersion);
 
   return {
     type: "valid",
@@ -144,18 +172,12 @@ export const parseNewsletterSubscribeInput = (
       email,
       email_normalized: email.toLowerCase(),
       state: "active",
-      source: normalizeNewsletterSource(input.source),
-      preferred_language: normalizePreferredLanguage(
-        input.preferred_language ?? input.preferredLanguage
-      ),
+      ...(source ? { source } : {}),
+      ...(preferredLanguage ? { preferred_language: preferredLanguage } : {}),
       consented_at: now,
       last_subscribed_at: now,
-      consent_version:
-        optionalTrimmedString(
-          input.consent_version ?? input.consentVersion,
-          CONSENT_VERSION_MAX_LENGTH
-        ) ?? null,
-      source_url: sourceUrl.value ?? null,
+      ...(consentVersion ? { consent_version: consentVersion } : {}),
+      ...(sourceReference ? { source_ref: sourceReference } : {}),
     },
   };
 };
@@ -163,18 +185,41 @@ export const parseNewsletterSubscribeInput = (
 export const newsletterSubscriberDataForWrite = (
   data: NewsletterSubscribeData,
   existing?: ExistingNewsletterSubscriber | null
-) => ({
-  email: data.email,
-  email_normalized: data.email_normalized,
-  state: data.state,
-  source: data.source,
-  preferred_language: data.preferred_language,
-  consented_at:
-    existing?.state === "active" && existing.consented_at
-      ? existing.consented_at
-      : data.consented_at,
-  last_subscribed_at: data.last_subscribed_at,
-  unsubscribed_at: null,
-  consent_version: data.consent_version ?? null,
-  source_url: data.source_url ?? null,
-});
+): NewsletterSubscriberWriteData => {
+  const isReactivation =
+    existing?.state != null && existing.state !== "active";
+  const writeData: NewsletterSubscriberWriteData = {
+    email: data.email,
+    email_normalized: data.email_normalized,
+    state: data.state,
+    consented_at:
+      existing?.state === "active" && existing.consented_at
+        ? existing.consented_at
+        : data.consented_at,
+    last_subscribed_at: data.last_subscribed_at,
+    unsubscribed_at: null,
+  };
+
+  if (data.source !== undefined) {
+    writeData.source = data.source;
+  } else if (isReactivation) {
+    writeData.source = null;
+  }
+  if (data.preferred_language !== undefined) {
+    writeData.preferred_language = data.preferred_language;
+  } else if (isReactivation) {
+    writeData.preferred_language = null;
+  }
+  if (data.consent_version !== undefined) {
+    writeData.consent_version = data.consent_version;
+  } else if (isReactivation) {
+    writeData.consent_version = null;
+  }
+  if (data.source_ref !== undefined) {
+    writeData.source_ref = data.source_ref;
+  } else if (isReactivation) {
+    writeData.source_ref = null;
+  }
+
+  return writeData;
+};

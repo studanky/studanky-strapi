@@ -33,14 +33,10 @@
       ]
     },
     "source": {
-      "type": "string",
-      "default": "website",
-      "required": true
+      "type": "string"
     },
     "preferred_language": {
-      "type": "string",
-      "default": "cs",
-      "required": true
+      "type": "string"
     },
     "consented_at": {
       "type": "datetime"
@@ -54,8 +50,8 @@
     "consent_version": {
       "type": "string"
     },
-    "source_url": {
-      "type": "string"
+    "source_ref": {
+      "type": "text"
     }
   }
 }

@@ -172,6 +172,11 @@ IS_PROXIED=true
 CRON_ENABLED=true
 STRAPI_PLUGIN_I18N_INIT_LOCALE_CODE=cs
 CORS_ORIGINS=https://studanky.example.com
+NEWSLETTER_SUBSCRIBE_MAX_BODY_BYTES=8192
+NEWSLETTER_EMAIL_RATE_LIMIT_HOUR_MAX=5
+NEWSLETTER_EMAIL_RATE_LIMIT_DAY_MAX=20
+NEWSLETTER_RATE_LIMIT_MAX_KEYS=10000
+NEWSLETTER_RATE_LIMIT_SALT=<generated-or-leave-empty-to-use-app-secret>
 
 DATABASE_CLIENT=postgres
 DATABASE_HOST=<coolify-internal-postgres-host>
@@ -194,6 +199,11 @@ HMAC_SECRET=<generated-minimum-32-chars>
 
 Use individual database variables instead of `DATABASE_URL`. It avoids password
 URL-encoding problems and matches this repository's `config/database.ts`.
+
+The website calls Strapi from a Next Server Action, so the primary visitor-IP
+rate limit belongs in the web application or edge layer; Strapi's built-in
+newsletter limiter is a secondary in-memory limit keyed by an HMAC hash of the
+normalized email.
 
 Optional SMTP variables can be added later if email sending is needed:
 

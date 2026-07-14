@@ -32,13 +32,32 @@ not application state.
   disabled; expose only `POST /api/newsletter/subscribe`.
 - **Newsletter anti-spam baseline**: keep the endpoint idempotent, maintain the
   DB UNIQUE index on `email_normalized`, keep the frontend honeypot field
-  `website`, validate a small payload allowlist and add an edge/reverse-proxy
-  rate limit for `/api/newsletter/subscribe` before launch.
+  `website`, validate `preferredLanguage` as a normalized locale tag when
+  present, reject oversized payloads and keep the Strapi email-hash rate limiter
+  enabled. `source` and `sourceRef` are optional free-form metadata, trimmed and
+  length-limited, but not whitelisted; callers must not put secrets or unrelated
+  user-provided text into them. Optional metadata fields are not defaulted
+  server-side, so the backend does not invent analytics data; blank optional
+  strings are treated as omitted. Active duplicate signups preserve omitted
+  metadata, while reactivation from `unsubscribed` / `bounced` clears omitted
+  metadata to avoid carrying stale consent context.
+- **Newsletter rate limiting by layer**: the website currently calls Strapi from
+  a Next Server Action, so the primary visitor-IP limit belongs in the web app.
+  Strapi does not trust arbitrary `X-Forwarded-For` and only applies a secondary
+  in-memory limit keyed by an HMAC hash of `email_normalized` (raw emails are not
+  logged). Add an edge/reverse-proxy limit for `/api/newsletter/subscribe` before
+  launch when the Coolify/Cloudflare production path is finalized.
+- **Newsletter body limits**: Strapi rejects payloads above
+  `NEWSLETTER_SUBSCRIBE_MAX_BODY_BYTES` after parsing and quickly rejects
+  oversized `Content-Length`; this is a backend guard, not a substitute for a
+  proxy/body-parser limit against chunked oversized requests.
 - **Escalation path for abuse**: if spam appears despite the baseline, add
   Cloudflare Turnstile or a similar challenge to the website form before
   hardening the Strapi endpoint further.
 - **CORS**: restrict `config/middlewares.ts` `strapi::cors` `origin` to the app's
-  domains in production (default is permissive).
+  domains in production (default is permissive). CORS is still correct hygiene,
+  but it is not anti-spam protection when the browser calls a Next Server Action
+  and the server action calls Strapi server-side.
 - **`sync-chmu`**: keep authenticated (admin API token only); consider a
   concurrency guard so two triggers can't overlap.
 - A general **rate limit** on the public read API is reasonable at the edge

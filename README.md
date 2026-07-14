@@ -95,6 +95,8 @@ Custom backend logic is documented in [`docs/`](./docs/):
 | `IS_PROXIED` | Trust `X-Forwarded-*` behind Traefik (default `true`; set `false` for direct access) |
 | `DOMAIN` / `PUBLIC_URL` | Public domain / explicit public URL for absolute links (QR, emails) |
 | `CORS_ORIGINS` | Comma-separated allowed origins (default `*` — **restrict in production**) |
+| `NEWSLETTER_SUBSCRIBE_MAX_BODY_BYTES` | Max newsletter subscribe payload size (default `8192`) |
+| `NEWSLETTER_EMAIL_RATE_LIMIT_*` / `NEWSLETTER_RATE_LIMIT_*` | In-memory secondary limiter by HMAC hash of normalized email |
 | `DATABASE_*` | Postgres connection + pool settings (compose forces `DATABASE_CLIENT=postgres`) |
 | `SMTP_*` / `DEFAULT_FROM_EMAIL` | Optional SMTP (nodemailer); auth attached only when enabled |
 | `AWS_BUCKET` + `AWS_*` / `UPLOAD_CDN_*` | Optional S3/R2 upload offload (empty = local volume) |

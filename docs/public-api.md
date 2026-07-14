@@ -157,12 +157,27 @@ does **not** expose core `newsletter-subscriber` CRUD routes.
   "source": "website-footer",
   "preferredLanguage": "cs",
   "consentVersion": "2026-07-10",
-  "sourceUrl": "https://example.com/"
+  "sourceRef": "/newsletter"
 }
 ```
 
-Accepted aliases: `preferred_language` or `preferredLanguage`,
-`consent_version` or `consentVersion`, `source_url` or `sourceUrl`.
+Request field names are camelCase. Strapi stores some attributes internally as
+snake_case, but clients should not send snake_case field names to this endpoint.
+Send the object as the top-level JSON body, not inside the core REST `{ "data": ... }`
+envelope.
+
+`source`, `preferredLanguage`, `consentVersion` and `sourceRef` are optional
+metadata. The backend does **not** invent defaults for them: if the web does not
+send them, a new or reactivated consent is stored without those metadata. Blank
+strings are treated as omitted. `source` is stored as optional free-form text
+(trimmed, max 80 chars); prefer stable values from the web layer such as
+`website-footer`, but the backend does not whitelist them. `preferredLanguage`
+should be a normalized locale/language tag from the web locale (for example
+`cs`, `en`, `cs-CZ`, `en-US`; underscores are normalized to hyphens).
+`sourceRef` is optional free-form context for where the signup came from
+(trimmed, max 2048 chars): it can be an absolute web URL, a relative web path,
+or an application/screen identifier such as `mobile-app:ios:prelaunch`.
+Do not put secrets or unrelated user-provided text into it.
 
 The frontend should also include a hidden honeypot field named `website`. Real
 users leave it empty; if a bot fills it, the server returns a neutral success
@@ -173,9 +188,19 @@ without storing anything.
 { "data": { "ok": true } }
 ```
 
-Validation errors return `400` (`email` invalid, `consent !== true`, invalid
-`sourceUrl`). Duplicate submissions are idempotent: the server normalizes the
-email into private `email_normalized`, reuses the existing subscriber when found,
+Validation errors return `400` (`email` invalid or over 254 chars,
+`consent !== true`, malformed/overlong `preferredLanguage` when provided,
+or optional metadata over its documented max length). Payloads over
+`NEWSLETTER_SUBSCRIBE_MAX_BODY_BYTES` return `413`. Repeated attempts for the
+same normalized email may return `429` with `Retry-After` (in-memory server-side
+limiter; the web's Next Server Action should still do the primary IP rate
+limit).
+
+Duplicate submissions are idempotent: the server normalizes the email into
+private `email_normalized`, reuses the existing subscriber when found,
 reactivates `unsubscribed` / `bounced` contacts on fresh consent, and always
 returns the same neutral success response so callers cannot enumerate stored
-emails.
+emails. For an already `active` subscriber, omitted optional metadata do not
+erase previously stored metadata. For reactivation from `unsubscribed` /
+`bounced`, omitted optional metadata are cleared so stale metadata are not
+attached to the new consent event.
