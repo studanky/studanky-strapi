@@ -34,13 +34,15 @@ not application state.
   DB UNIQUE index on `email_normalized`, keep the frontend honeypot field
   `website`, validate `preferredLanguage` as a normalized locale tag when
   present, reject oversized payloads and keep the Strapi email-hash rate limiter
-  enabled. `source` and `sourceRef` are optional free-form metadata, trimmed and
-  length-limited, but not whitelisted; callers must not put secrets or unrelated
-  user-provided text into them. Optional metadata fields are not defaulted
-  server-side, so the backend does not invent analytics data; blank optional
-  strings are treated as omitted. Active duplicate signups preserve omitted
-  metadata, while reactivation from `unsubscribed` / `bounced` clears omitted
-  metadata to avoid carrying stale consent context.
+  enabled. `source` is a stable, low-cardinality placement/channel identifier;
+  `sourceRef` is the specific page/screen context. Both are optional free-form
+  metadata, trimmed and length-limited, but not whitelisted; callers must not put
+  secrets, auth/session tokens, raw referrer headers, or unrelated user-provided
+  text into them. Optional metadata fields are not defaulted server-side, so the
+  backend does not invent analytics data; blank optional strings are treated as
+  omitted. Active duplicate signups preserve omitted metadata, while reactivation
+  from `unsubscribed` / `bounced` clears omitted metadata to avoid carrying stale
+  consent context.
 - **Newsletter rate limiting by layer**: the website currently calls Strapi from
   a Next Server Action, so the primary visitor-IP limit belongs in the web app.
   Strapi does not trust arbitrary `X-Forwarded-For` and only applies a secondary

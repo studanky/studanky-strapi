@@ -169,15 +169,14 @@ envelope.
 `source`, `preferredLanguage`, `consentVersion` and `sourceRef` are optional
 metadata. The backend does **not** invent defaults for them: if the web does not
 send them, a new or reactivated consent is stored without those metadata. Blank
-strings are treated as omitted. `source` is stored as optional free-form text
-(trimmed, max 80 chars); prefer stable values from the web layer such as
-`website-footer`, but the backend does not whitelist them. `preferredLanguage`
-should be a normalized locale/language tag from the web locale (for example
-`cs`, `en`, `cs-CZ`, `en-US`; underscores are normalized to hyphens).
-`sourceRef` is optional free-form context for where the signup came from
-(trimmed, max 2048 chars): it can be an absolute web URL, a relative web path,
-or an application/screen identifier such as `mobile-app:ios:prelaunch`.
-Do not put secrets or unrelated user-provided text into it.
+strings are treated as omitted.
+
+| Field | Meaning | Recommended values / format |
+|---|---|---|
+| `source` | Stable, low-cardinality signup placement/channel identifier. Use it for analytics grouping: "which form or product surface created this signup?" | Optional free-form text, trimmed, max 80 chars. Prefer controlled slug values such as `prelaunch-page`, `website-hero`, `website-footer`, `mobile-app`. Do not put URLs, query strings, campaign IDs, user input, or per-request values here. The backend does not whitelist this field. |
+| `preferredLanguage` | Preferred language/locale for future newsletter communication, derived from the web/app i18n locale at the moment of signup. | Optional BCP 47-style language/locale tag, e.g. `cs`, `en`, `cs-CZ`, `en-US`, `sk`. Underscores are normalized to hyphens (`cs_CZ` -> `cs-CZ`) and casing is normalized. If the UI locale is unknown, omit it. |
+| `consentVersion` | Version of the privacy/marketing consent text shown to the user. | Optional stable version string, max 80 chars, e.g. `2026-07-10` or `newsletter-consent-2026-07-10`. |
+| `sourceRef` | Specific context where the signup happened. Use it for traceability: "which exact page/screen produced this signup?" | Optional text, trimmed, max 2048 chars. For web signups, prefer an absolute canonical URL such as `https://studankyapp.cz/` or `https://studankyapp.cz/prelaunch`; absolute URLs are clearer across production/staging domains. A relative path like `/newsletter` is acceptable when the caller has a single unambiguous public origin. For native/mobile contexts use an app/screen identifier such as `mobile-app:ios:prelaunch`. Do not put secrets, auth/session tokens, raw referrer headers, or unrelated user-provided text into it. |
 
 The frontend should also include a hidden honeypot field named `website`. Real
 users leave it empty; if a bot fills it, the server returns a neutral success
