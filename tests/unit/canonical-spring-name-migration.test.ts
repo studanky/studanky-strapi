@@ -23,10 +23,14 @@ async function createCoreStore(db: Knex, defaultLocale = "cs") {
     table.increments("id").primary();
     table.string("key");
     table.text("value");
+    table.string("environment").nullable();
+    table.string("tag").nullable();
   });
   await db("strapi_core_store_settings").insert({
     key: "plugin_i18n_default_locale",
     value: JSON.stringify(defaultLocale),
+    environment: null,
+    tag: null,
   });
 }
 
@@ -87,7 +91,9 @@ describe("canonical Spring name migration", () => {
       },
     ]);
 
-    const beforeCount = Number((await db("springs").count({ count: "*" }).first())?.count);
+    const beforeCount = Number(
+      (await db("springs").count({ count: "*" }).first())?.count,
+    );
     await db.transaction((trx) => migration.up(trx));
     const rows = await db("springs").orderBy("id");
 
@@ -114,7 +120,9 @@ describe("canonical Spring name migration", () => {
       "zofinsky pramen",
       "zofinsky pramen",
     ]);
-    expect(rows.every((row) => row.updated_at === unchangedTimestamp)).toBe(true);
+    expect(rows.every((row) => row.updated_at === unchangedTimestamp)).toBe(
+      true,
+    );
   });
 
   it("fails and rolls back when a state has no default-locale row", async () => {
@@ -129,13 +137,46 @@ describe("canonical Spring name migration", () => {
       name_search: "english only",
     });
 
-    await expect(
-      db.transaction((trx) => migration.up(trx))
-    ).rejects.toThrow("requires exactly one cs draft row");
+    await expect(db.transaction((trx) => migration.up(trx))).rejects.toThrow(
+      "requires exactly one cs draft row",
+    );
     await expect(db("springs").first()).resolves.toMatchObject({
       name: "English only",
       name_search: "english only",
     });
+  });
+
+  it("ignores environment-scoped core-store values", async () => {
+    const db = createDatabase();
+    await createCoreStore(db, "cs");
+    await db("strapi_core_store_settings").insert({
+      key: "plugin_i18n_default_locale",
+      value: JSON.stringify("en"),
+      environment: "production",
+      tag: null,
+    });
+    await createSprings(db);
+    await db("springs").insert([
+      {
+        document_id: "doc-1",
+        locale: "cs",
+        published_at: null,
+        name: "Český název",
+        name_search: "stale",
+      },
+      {
+        document_id: "doc-1",
+        locale: "en",
+        published_at: null,
+        name: "English name",
+        name_search: "english name",
+      },
+    ]);
+
+    await db.transaction((trx) => migration.up(trx));
+
+    const rows = await db("springs").orderBy("id");
+    expect(rows.map((row) => row.name)).toEqual(["Český název", "Český název"]);
   });
 
   it("is a safe no-op before schema sync on a fresh database", async () => {
@@ -143,4 +184,3 @@ describe("canonical Spring name migration", () => {
     await expect(migration.up(db)).resolves.toBeUndefined();
   });
 });
-

@@ -20,6 +20,7 @@ const REQUIRED_SPRING_COLUMNS = [
   "name",
   "name_search",
 ];
+const REQUIRED_CORE_STORE_COLUMNS = ["key", "value", "environment", "tag"];
 
 function normalizeSearchText(value) {
   return value
@@ -60,8 +61,8 @@ module.exports = {
     if (missingColumns.length > 0) {
       throw new Error(
         `Canonical Spring name migration cannot run: springs is missing columns ${missingColumns.join(
-          ", "
-        )}`
+          ", ",
+        )}`,
       );
     }
 
@@ -72,19 +73,37 @@ module.exports = {
 
     if (!(await knex.schema.hasTable("strapi_core_store_settings"))) {
       throw new Error(
-        "Canonical Spring name migration cannot determine the default locale: strapi_core_store_settings is missing"
+        "Canonical Spring name migration cannot determine the default locale: strapi_core_store_settings is missing",
+      );
+    }
+
+    const missingCoreStoreColumns = [];
+    for (const column of REQUIRED_CORE_STORE_COLUMNS) {
+      if (
+        !(await knex.schema.hasColumn("strapi_core_store_settings", column))
+      ) {
+        missingCoreStoreColumns.push(column);
+      }
+    }
+    if (missingCoreStoreColumns.length > 0) {
+      throw new Error(
+        `Canonical Spring name migration cannot determine the default locale: strapi_core_store_settings is missing columns ${missingCoreStoreColumns.join(
+          ", ",
+        )}`,
       );
     }
 
     const setting = await knex("strapi_core_store_settings")
       .select("value")
       .where({ key: "plugin_i18n_default_locale" })
+      .whereNull("environment")
+      .whereNull("tag")
       .first();
     const defaultLocale = parseDefaultLocale(setting?.value);
 
     if (!defaultLocale) {
       throw new Error(
-        "Canonical Spring name migration cannot determine the Strapi i18n default locale"
+        "Canonical Spring name migration cannot determine the Strapi i18n default locale",
       );
     }
 
@@ -92,7 +111,7 @@ module.exports = {
     for (const row of rows) {
       if (!row.document_id || !row.locale) {
         throw new Error(
-          `Canonical Spring name migration found invalid Spring row id=${row.id}`
+          `Canonical Spring name migration found invalid Spring row id=${row.id}`,
         );
       }
 
@@ -111,14 +130,14 @@ module.exports = {
       if (baselines.length !== 1) {
         const [documentId, publicationState] = key.split("\u0000");
         throw new Error(
-          `Canonical Spring name migration requires exactly one ${defaultLocale} ${publicationState} row for document ${documentId}; found ${baselines.length}`
+          `Canonical Spring name migration requires exactly one ${defaultLocale} ${publicationState} row for document ${documentId}; found ${baselines.length}`,
         );
       }
 
       const canonicalName = baselines[0].name;
       if (typeof canonicalName !== "string" || !canonicalName.trim()) {
         throw new Error(
-          `Canonical Spring name migration found an empty default-locale name for document ${baselines[0].document_id}`
+          `Canonical Spring name migration found an empty default-locale name for document ${baselines[0].document_id}`,
         );
       }
 
@@ -145,4 +164,3 @@ module.exports = {
     }
   },
 };
-
