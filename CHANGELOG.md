@@ -37,7 +37,9 @@ follows [Semantic Versioning](https://semver.org/).
   log entry per request: the total count, up to ten affected document samples,
   and the omitted count. The complete audit remains available through the
   documented database query. Request-wide i18n configuration errors remain
-  visible, and locale parsing/fallback chains are cached within each request.
+  visible. One shared canonical configured-locale index is reused by the base
+  chain and source fallback, while per-row locale parsing and fallback attempts
+  remain cached within each request.
 - Source-locale lifecycle validation now reports editor changes as a Strapi
   validation error and tolerates legacy non-localized sync payloads carrying an
   unchanged null value without allowing them to erase an established source.

@@ -42,6 +42,9 @@ schema and must not be changed only on production.
 - Unsupported client locale codes are never sent to Strapi Document Service.
 - Failure to read i18n configuration is a visible server error; the application
   does not silently assume a hardcoded language.
+- Each request builds one canonical configured-locale index through the shared
+  pure helpers in `src/utils/locale.ts`; both the base chain and Spring source
+  fallback reuse that same validated mapping.
 
 ## Source locale versus read default
 
