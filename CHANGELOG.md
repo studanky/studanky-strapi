@@ -33,8 +33,10 @@ follows [Semantic Versioning](https://semver.org/).
   following deterministically.
 - All four read endpoints log corrupt source-locale metadata and continue with
   the valid requested/parent/sibling/default chain instead of hiding readable
-  content or failing the request. Request-wide i18n configuration errors remain
-  visible, and locale parsing/fallback chains are cached within each request.
+  content or failing the request. Map and search aggregate all affected document
+  IDs into at most one error log entry per request. Request-wide i18n
+  configuration errors remain visible, and locale parsing/fallback chains are
+  cached within each request.
 - Source-locale lifecycle validation now reports editor changes as a Strapi
   validation error and tolerates legacy non-localized sync payloads carrying an
   unchanged null value without allowing them to erase an established source.

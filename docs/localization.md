@@ -32,7 +32,8 @@ schema and must not be changed only on production.
 - A Spring with corrupt/missing `source_locale` is logged, but all four
   endpoints still use the valid requested/parent/sibling/default portion of the
   chain. Source metadata improves the final fallback; it is not a prerequisite
-  for reading an otherwise available published variant.
+  for reading an otherwise available published variant. Map and search emit at
+  most one aggregate error per request, including all affected document IDs.
 - Fallback is document-level. A present translation with an empty description
   is valid and does not trigger fallback.
 - Unsupported client locale codes are never sent to Strapi Document Service.
