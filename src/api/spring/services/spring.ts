@@ -54,6 +54,11 @@ interface LocalizedSpringRow {
   [key: string]: unknown;
 }
 
+interface SourceFallbackIssue {
+  documentId: string;
+  error: Error;
+}
+
 /** The published Spring row shape read by `preview` (teaser fields only). */
 interface SpringPreviewRow {
   documentId: string;
@@ -179,21 +184,35 @@ function resolveSpringReadLocales(params: {
     return baseAttempts;
   }
 
-  try {
-    return resolveLocaleChain({
-      requested,
-      defaultLocale,
-      sourceLocale: source.locale,
-      configured,
-      preferredVariants,
-    });
-  } catch (error) {
-    const cause = error instanceof Error ? error : new Error(String(error));
+  const canonicalSource = canonicalizeLocaleTag(source.locale);
+  const configuredSource = configured.find(
+    (locale) => canonicalizeLocaleTag(locale) === canonicalSource,
+  );
+  if (!canonicalSource || !configuredSource) {
     strapi.log.error(
-      `spring.${endpoint}: invalid source_locale for document ${documentId}: ${cause.message}; continuing without source fallback`,
+      `spring.${endpoint}: invalid source_locale for document ${documentId}: ${source.locale} is not configured in Strapi i18n; continuing without source fallback`,
     );
     return baseAttempts;
   }
+
+  return [...new Set([...baseAttempts, configuredSource])];
+}
+
+function logSourceFallbackIssues(
+  strapi: Core.Strapi,
+  endpoint: "map" | "search",
+  issues: SourceFallbackIssue[],
+): void {
+  if (issues.length === 0) {
+    return;
+  }
+
+  const details = issues
+    .map(({ documentId, error }) => `${documentId} (${error.message})`)
+    .join("; ");
+  strapi.log.error(
+    `spring.${endpoint}: ${issues.length} document(s) without usable source_locale fallback; continuing with requested/default chain: ${details}`,
+  );
 }
 
 /**
@@ -207,16 +226,12 @@ function selectLocalizedSpringRows<T extends LocalizedSpringRow>(params: {
   defaultLocale: string;
   configured: string[];
   preferredVariants: PreferredLocaleVariants;
-  onInvalidDocument: (documentId: string, error: Error) => void;
-}): Array<Omit<T, "source_locale">> {
-  const {
-    rows,
-    requested,
-    defaultLocale,
-    configured,
-    preferredVariants,
-    onInvalidDocument,
-  } = params;
+}): {
+  rows: Array<Omit<T, "source_locale">>;
+  sourceFallbackIssues: SourceFallbackIssue[];
+} {
+  const { rows, requested, defaultLocale, configured, preferredVariants } =
+    params;
 
   // Validate request-wide i18n configuration before processing individual
   // documents. A broken global default/configured locale list must stay a
@@ -250,6 +265,7 @@ function selectLocalizedSpringRows<T extends LocalizedSpringRow>(params: {
   }
 
   const selected: Array<Omit<T, "source_locale">> = [];
+  const sourceFallbackIssues: SourceFallbackIssue[] = [];
   for (const [documentId, variants] of byDocument) {
     let attempts = baseAttempts;
     try {
@@ -285,7 +301,7 @@ function selectLocalizedSpringRows<T extends LocalizedSpringRow>(params: {
       }
     } catch (error) {
       const cause = error instanceof Error ? error : new Error(String(error));
-      onInvalidDocument(documentId, cause);
+      sourceFallbackIssues.push({ documentId, error: cause });
     }
 
     const variantsByLocale = new Map(
@@ -299,7 +315,7 @@ function selectLocalizedSpringRows<T extends LocalizedSpringRow>(params: {
       selected.push(publicRow as Omit<T, "source_locale">);
     }
   }
-  return selected;
+  return { rows: selected, sourceFallbackIssues };
 }
 
 function hasNameSearchField(strapi: Core.Strapi): boolean {
@@ -422,17 +438,15 @@ export default factories.createCoreService(SPRING_UID, ({ strapi }) => ({
       ],
     })) as LocalizedSpringRow[];
 
-    return selectLocalizedSpringRows({
+    const selection = selectLocalizedSpringRows({
       rows,
       requested: requestedLocale,
       defaultLocale,
       configured,
       preferredVariants: getPreferredLocaleVariants(strapi),
-      onInvalidDocument: (documentId, error) =>
-        strapi.log.error(
-          `spring.map: skipping invalid document ${documentId}: ${error.message}`,
-        ),
     });
+    logSourceFallbackIssues(strapi, "map", selection.sourceFallbackIssues);
+    return selection.rows;
   },
 
   /**
@@ -498,17 +512,15 @@ export default factories.createCoreService(SPRING_UID, ({ strapi }) => ({
       // physical cap leaves room for every configured localization per result.
       limit: SEARCH_CANDIDATE_CAP * Math.max(1, configured.length),
     })) as LocalizedSpringRow[];
-    const candidates = selectLocalizedSpringRows({
+    const selection = selectLocalizedSpringRows({
       rows,
       requested: params.locale,
       defaultLocale,
       configured,
       preferredVariants: getPreferredLocaleVariants(strapi),
-      onInvalidDocument: (documentId, error) =>
-        strapi.log.error(
-          `spring.search: skipping invalid document ${documentId}: ${error.message}`,
-        ),
-    }).slice(0, SEARCH_CANDIDATE_CAP) as Array<
+    });
+    logSourceFallbackIssues(strapi, "search", selection.sourceFallbackIssues);
+    const candidates = selection.rows.slice(0, SEARCH_CANDIDATE_CAP) as Array<
       Omit<LocalizedSpringRow, "source_locale"> & {
         lat: number | string;
         lng: number | string;

@@ -130,7 +130,7 @@ describe("spring.map — document locale fallback", () => {
     });
   });
 
-  it("logs a corrupt source and still serves the document through the base map chain", async () => {
+  it("aggregates corrupt sources and still serves documents through the base map chain", async () => {
     const { service, log } = buildService({
       findMany: async () => [
         {
@@ -153,14 +153,31 @@ describe("spring.map — document locale fallback", () => {
           locale: "cs",
           source_locale: null,
         },
+        {
+          documentId: "removed-source",
+          name: "Removed source",
+          lat: 50.2,
+          lng: 14.2,
+          current_status: "unknown",
+          status_updated_at: null,
+          locale: "cs",
+          source_locale: "de",
+        },
       ],
     });
 
     const result = await service.findInBbox("13,49,15,51", "en");
 
-    expect(result.map((row) => row.documentId)).toEqual(["healthy", "corrupt"]);
+    expect(result.map((row) => row.documentId)).toEqual([
+      "healthy",
+      "corrupt",
+      "removed-source",
+    ]);
+    expect(log.error).toHaveBeenCalledTimes(1);
     expect(log.error).toHaveBeenCalledWith(
-      expect.stringContaining("skipping invalid document corrupt"),
+      expect.stringMatching(
+        /spring\.map: 2 document\(s\).*continuing with requested\/default chain:.*corrupt.*removed-source/,
+      ),
     );
   });
 
@@ -301,8 +318,11 @@ describe("spring.search — document locale fallback", () => {
       "healthy",
       "removed-source",
     ]);
+    expect(log.error).toHaveBeenCalledTimes(1);
     expect(log.error).toHaveBeenCalledWith(
-      expect.stringContaining("skipping invalid document removed-source"),
+      expect.stringMatching(
+        /spring\.search: 1 document\(s\).*continuing with requested\/default chain:.*removed-source/,
+      ),
     );
   });
 });
