@@ -44,6 +44,12 @@ function buildService(options: {
     documentId: where.documentId,
     source_locale: options.sourceLocale ?? "cs",
   }));
+  const log = {
+    debug: vi.fn(),
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+  };
   const strapi = {
     contentTypes: {
       "api::spring.spring": { attributes: { name_search: {} } },
@@ -56,7 +62,7 @@ function buildService(options: {
       get: vi.fn(() => ({ en: ["en-US", "en-GB"] })),
     },
     plugin: vi.fn(() => ({ service: vi.fn(() => localesService) })),
-    log: { debug() {}, info() {}, warn() {}, error() {} },
+    log,
   } as never;
 
   return {
@@ -65,6 +71,7 @@ function buildService(options: {
     findOne,
     findSource,
     localesService,
+    log,
   };
 }
 
@@ -120,6 +127,49 @@ describe("spring.map — document locale fallback", () => {
         locale: { $in: ["cs", "en-US"] },
       },
     });
+  });
+
+  it("logs and skips a corrupt document without hiding healthy map rows", async () => {
+    const { service, log } = buildService({
+      findMany: async () => [
+        {
+          documentId: "healthy",
+          name: "Healthy",
+          lat: 50,
+          lng: 14,
+          current_status: "unknown",
+          status_updated_at: null,
+          locale: "cs",
+          source_locale: "cs",
+        },
+        {
+          documentId: "corrupt",
+          name: "Corrupt",
+          lat: 50.1,
+          lng: 14.1,
+          current_status: "unknown",
+          status_updated_at: null,
+          locale: "cs",
+          source_locale: null,
+        },
+      ],
+    });
+
+    await expect(service.findInBbox("13,49,15,51", "en")).resolves.toEqual([
+      expect.objectContaining({ documentId: "healthy" }),
+    ]);
+    expect(log.error).toHaveBeenCalledWith(
+      expect.stringContaining("skipping invalid document corrupt"),
+    );
+  });
+
+  it("keeps an empty global i18n configuration as a visible error", async () => {
+    const { service, findMany } = buildService({ configured: [] });
+
+    await expect(service.findInBbox("13,49,15,51", "en")).rejects.toThrow(
+      "has no configured locales",
+    );
+    expect(findMany).not.toHaveBeenCalled();
   });
 });
 
@@ -215,6 +265,41 @@ describe("spring.search — document locale fallback", () => {
     expect(result).toHaveLength(1);
     expect(result[0]).toMatchObject({ documentId: "near" });
     expect(result[0].distance_m).toEqual(expect.any(Number));
+  });
+
+  it("logs and skips a search candidate whose source locale is no longer configured", async () => {
+    const { service, log } = buildService({
+      configured: ["cs", "en"],
+      findMany: async () => [
+        {
+          documentId: "healthy",
+          name: "Healthy",
+          lat: 50,
+          lng: 14,
+          current_status: "unknown",
+          status_updated_at: null,
+          locale: "cs",
+          source_locale: "cs",
+        },
+        {
+          documentId: "removed-source",
+          name: "Removed source",
+          lat: 50.1,
+          lng: 14.1,
+          current_status: "unknown",
+          status_updated_at: null,
+          locale: "cs",
+          source_locale: "de",
+        },
+      ],
+    });
+
+    const result = await service.search({ q: "spring", locale: "en" });
+
+    expect(result.map((row) => row.documentId)).toEqual(["healthy"]);
+    expect(log.error).toHaveBeenCalledWith(
+      expect.stringContaining("skipping invalid document removed-source"),
+    );
   });
 });
 

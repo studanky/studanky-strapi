@@ -2,6 +2,7 @@ import QRCode from "qrcode";
 import * as fs from "fs";
 import * as path from "path";
 import * as os from "os";
+import { errors } from "@strapi/utils";
 import { normalizeSearchText } from "../../../../utils/search";
 import { canonicalizeLocaleTag } from "../../../../utils/locale";
 
@@ -23,7 +24,9 @@ const canonicalSourceLocale = (value: unknown): string => {
     typeof value === "string" ? value : undefined,
   );
   if (!canonical) {
-    throw new Error("Spring source_locale must be a valid locale code");
+    throw new errors.ValidationError(
+      "Spring source_locale must be a valid locale code",
+    );
   }
   return canonical;
 };
@@ -63,6 +66,9 @@ const ensureSourceLocaleOnCreate = async (data: Record<string, unknown>) => {
     typeof data.locale === "string"
       ? data.locale
       : await strapi.plugin("i18n").service("locales").getDefaultLocale();
+  if (!creationLocale) {
+    throw new Error("Strapi i18n default locale is not configured");
+  }
   data.source_locale = canonicalSourceLocale(creationLocale);
 };
 
@@ -77,7 +83,6 @@ const preventSourceLocaleChange = async (event: {
     return;
   }
 
-  const requested = canonicalSourceLocale(data.source_locale);
   const existing = where
     ? ((await strapi.db.query(SPRING_UID).findOne({
         where,
@@ -85,13 +90,40 @@ const preventSourceLocaleChange = async (event: {
       })) as { source_locale?: string | null } | null)
     : null;
 
-  if (
-    existing?.source_locale &&
-    canonicalSourceLocale(existing.source_locale) !== requested
-  ) {
-    throw new Error("Spring source_locale is immutable after creation");
+  // Data transfer and an old-version rollback can leave legacy rows with NULL.
+  // A non-localized-field sync may then submit the key as `source_locale: null`
+  // during an unrelated Content Manager edit. Do not turn that no-op into a
+  // 500; leave the missing value untouched so the data can be repaired by the
+  // documented audit/backfill procedure.
+  if (!existing?.source_locale) {
+    if (
+      data.source_locale == null ||
+      (typeof data.source_locale === "string" && !data.source_locale.trim())
+    ) {
+      delete data.source_locale;
+      return;
+    }
+    data.source_locale = canonicalSourceLocale(data.source_locale);
+    return;
   }
-  data.source_locale = existing?.source_locale ?? requested;
+
+  const persisted = canonicalSourceLocale(existing.source_locale);
+  if (
+    data.source_locale == null ||
+    (typeof data.source_locale === "string" && !data.source_locale.trim())
+  ) {
+    // Never let a stale NULL synchronization erase an established source.
+    data.source_locale = persisted;
+    return;
+  }
+
+  const requested = canonicalSourceLocale(data.source_locale);
+  if (persisted !== requested) {
+    throw new errors.ValidationError(
+      "Spring source_locale is immutable after creation",
+    );
+  }
+  data.source_locale = persisted;
 };
 
 /**

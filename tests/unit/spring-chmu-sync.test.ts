@@ -125,6 +125,19 @@ describe("spring.syncFromChmu localization", () => {
     });
   });
 
+  it("does not publish when create returns no documentId", async () => {
+    const { service, create, publish, log } = buildService(() => null);
+    create.mockResolvedValueOnce({ documentId: undefined });
+
+    const stats = await service.syncFromChmu();
+
+    expect(publish).not.toHaveBeenCalled();
+    expect(stats.errors).toBe(1);
+    expect(log.error).toHaveBeenCalledWith(
+      expect.stringContaining("No documentId resolved for CHMU-1"),
+    );
+  });
+
   it("updates only the existing Czech variant and leaves translated content out of the write", async () => {
     const { service, create, update, publish } = buildService(
       (args: any) =>

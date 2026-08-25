@@ -62,8 +62,40 @@ describe("Spring source_locale lifecycle invariant", () => {
     installStrapi("cs");
     const data: Record<string, unknown> = { source_locale: "en" };
 
-    await expect(
-      lifecycles.beforeUpdate({ params: { data, where: { id: 1 } } }),
-    ).rejects.toThrow("source_locale is immutable");
+    const result = lifecycles.beforeUpdate({
+      params: { data, where: { id: 1 } },
+    });
+    await expect(result).rejects.toThrow("source_locale is immutable");
+    await expect(result).rejects.toMatchObject({ name: "ValidationError" });
+  });
+
+  it("does not fail an unrelated update when a legacy row has a null source", async () => {
+    installStrapi(null);
+    const data: Record<string, unknown> = {
+      description: "Updated description",
+      source_locale: null,
+    };
+
+    await lifecycles.beforeUpdate({ params: { data, where: { id: 1 } } });
+
+    expect(data).toEqual({ description: "Updated description" });
+  });
+
+  it("prevents a stale null sync from erasing an established source", async () => {
+    installStrapi("cs");
+    const data: Record<string, unknown> = { source_locale: null };
+
+    await lifecycles.beforeUpdate({ params: { data, where: { id: 1 } } });
+
+    expect(data.source_locale).toBe("cs");
+  });
+
+  it("allows an explicit valid backfill when the legacy source is null", async () => {
+    installStrapi(null);
+    const data: Record<string, unknown> = { source_locale: "en_us" };
+
+    await lifecycles.beforeUpdate({ params: { data, where: { id: 1 } } });
+
+    expect(data.source_locale).toBe("en-US");
   });
 });

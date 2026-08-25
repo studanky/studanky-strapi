@@ -50,7 +50,7 @@ interface I18nLocale {
 interface LocalizedSpringRow {
   documentId: string;
   locale: string;
-  source_locale: string;
+  source_locale: string | null;
   [key: string]: unknown;
 }
 
@@ -92,7 +92,11 @@ async function getConfiguredLocales(strapi: Core.Strapi): Promise<string[]> {
     .plugin("i18n")
     .service("locales")
     .find()) as I18nLocale[];
-  return locales.map((locale) => locale.code).filter(Boolean);
+  const codes = locales.map((locale) => locale.code).filter(Boolean);
+  if (codes.length === 0) {
+    throw new Error("Strapi i18n has no configured locales");
+  }
+  return codes;
 }
 
 function getPreferredLocaleVariants(
@@ -142,9 +146,41 @@ function selectLocalizedSpringRows<T extends LocalizedSpringRow>(params: {
   defaultLocale: string;
   configured: string[];
   preferredVariants: PreferredLocaleVariants;
+  onInvalidDocument: (documentId: string, error: Error) => void;
 }): Array<Omit<T, "source_locale">> {
-  const { rows, requested, defaultLocale, configured, preferredVariants } =
-    params;
+  const {
+    rows,
+    requested,
+    defaultLocale,
+    configured,
+    preferredVariants,
+    onInvalidDocument,
+  } = params;
+
+  // Validate request-wide i18n configuration before processing individual
+  // documents. A broken global default/configured locale list must stay a
+  // visible server error rather than degrading into an empty map.
+  const baseAttempts = resolveLocaleChain({
+    requested,
+    defaultLocale,
+    configured,
+    preferredVariants,
+  });
+
+  // Locale parsing is synchronous ICU work. Cache it for this request so the
+  // hot map/search path does not repeat it for every physical locale row.
+  const canonicalCache = new Map<string, string | null>();
+  const canonicalizeCached = (value: string): string | null => {
+    if (!canonicalCache.has(value)) {
+      canonicalCache.set(value, canonicalizeLocaleTag(value));
+    }
+    return canonicalCache.get(value) ?? null;
+  };
+  const configuredByCanonical = new Map(
+    configured.map((locale) => [canonicalizeCached(locale), locale]),
+  );
+  const attemptsBySource = new Map<string, string[]>();
+
   const byDocument = new Map<string, T[]>();
   for (const row of rows) {
     const group = byDocument.get(row.documentId) ?? [];
@@ -154,31 +190,49 @@ function selectLocalizedSpringRows<T extends LocalizedSpringRow>(params: {
 
   const selected: Array<Omit<T, "source_locale">> = [];
   for (const [documentId, variants] of byDocument) {
-    const sourceLocales = [
-      ...new Set(variants.map((row) => row.source_locale).filter(Boolean)),
-    ];
-    if (sourceLocales.length !== 1) {
-      throw new Error(
-        `Spring ${documentId} must have exactly one source_locale; found ${sourceLocales.length}`,
+    try {
+      const canonicalSources = variants.map((row) =>
+        row.source_locale ? canonicalizeCached(row.source_locale) : null,
       );
-    }
+      const sourceLocales = [
+        ...new Set(canonicalSources.filter((locale) => locale !== null)),
+      ];
+      if (
+        canonicalSources.some((locale) => locale === null) ||
+        sourceLocales.length !== 1
+      ) {
+        throw new Error(
+          `must have one valid source_locale on every locale row; found ${sourceLocales.length} distinct values`,
+        );
+      }
 
-    const attempts = resolveLocaleChain({
-      requested,
-      defaultLocale,
-      sourceLocale: sourceLocales[0],
-      configured,
-      preferredVariants,
-    });
-    const variantsByLocale = new Map(
-      variants.map((row) => [canonicalizeLocaleTag(row.locale), row]),
-    );
-    const row = attempts
-      .map((locale) => variantsByLocale.get(canonicalizeLocaleTag(locale)))
-      .find((candidate): candidate is T => Boolean(candidate));
-    if (row) {
-      const { source_locale: _sourceLocale, ...publicRow } = row;
-      selected.push(publicRow as Omit<T, "source_locale">);
+      const sourceLocale = sourceLocales[0];
+      const configuredSource = configuredByCanonical.get(sourceLocale);
+      if (!configuredSource) {
+        throw new Error(
+          `source_locale ${sourceLocale} is not configured in Strapi i18n`,
+        );
+      }
+
+      let attempts = attemptsBySource.get(configuredSource);
+      if (!attempts) {
+        attempts = [...new Set([...baseAttempts, configuredSource])];
+        attemptsBySource.set(configuredSource, attempts);
+      }
+
+      const variantsByLocale = new Map(
+        variants.map((row) => [canonicalizeCached(row.locale), row]),
+      );
+      const row = attempts
+        .map((locale) => variantsByLocale.get(canonicalizeCached(locale)))
+        .find((candidate): candidate is T => Boolean(candidate));
+      if (row) {
+        const { source_locale: _sourceLocale, ...publicRow } = row;
+        selected.push(publicRow as Omit<T, "source_locale">);
+      }
+    } catch (error) {
+      const cause = error instanceof Error ? error : new Error(String(error));
+      onInvalidDocument(documentId, cause);
     }
   }
   return selected;
@@ -310,6 +364,10 @@ export default factories.createCoreService(SPRING_UID, ({ strapi }) => ({
       defaultLocale,
       configured,
       preferredVariants: getPreferredLocaleVariants(strapi),
+      onInvalidDocument: (documentId, error) =>
+        strapi.log.error(
+          `spring.map: skipping invalid document ${documentId}: ${error.message}`,
+        ),
     });
   },
 
@@ -382,6 +440,10 @@ export default factories.createCoreService(SPRING_UID, ({ strapi }) => ({
       defaultLocale,
       configured,
       preferredVariants: getPreferredLocaleVariants(strapi),
+      onInvalidDocument: (documentId, error) =>
+        strapi.log.error(
+          `spring.search: skipping invalid document ${documentId}: ${error.message}`,
+        ),
     }).slice(0, SEARCH_CANDIDATE_CAP) as Array<
       Omit<LocalizedSpringRow, "source_locale"> & {
         lat: number | string;
@@ -571,20 +633,19 @@ export default factories.createCoreService(SPRING_UID, ({ strapi }) => ({
         },
       }) as Promise<SpringPreviewRow | null>;
 
-    let spring: SpringPreviewRow | null = null;
-    let servedLocale = defaultLocale;
+    let served: { spring: SpringPreviewRow; locale: string } | null = null;
     for (const loc of attempts) {
       const row = await queryPreview(loc);
       if (row) {
-        spring = row;
-        servedLocale = loc;
+        served = { spring: row, locale: loc };
         break;
       }
     }
 
-    if (!spring) {
+    if (!served) {
       return null;
     }
+    const { spring, locale: servedLocale } = served;
 
     const photo = spring.photo
       ? {
@@ -729,14 +790,14 @@ export default factories.createCoreService(SPRING_UID, ({ strapi }) => ({
           stats.localized_updated++;
         }
 
+        if (!documentId) {
+          throw new Error(`No documentId resolved for ${st.externalId}`);
+        }
+
         await strapi.documents(SPRING_UID).publish({
           documentId,
           locale: CHMU_SOURCE_LOCALE,
         });
-
-        if (!documentId) {
-          throw new Error(`No documentId resolved for ${st.externalId}`);
-        }
 
         if (stationWasCreated) {
           stats.created++;
