@@ -1,49 +1,141 @@
 import { describe, it, expect } from "vitest";
-import { resolvePreviewLocales } from "../../src/utils/locale";
+import { resolveLocaleChain } from "../../src/utils/locale";
 
-const configured = ["cs", "en", "de"];
+const configured = ["cs", "en", "en-US", "de"];
 
-describe("resolvePreviewLocales", () => {
+describe("resolveLocaleChain", () => {
   it("tries the requested locale first, then the default, when both are configured and distinct", () => {
     expect(
-      resolvePreviewLocales({ requested: "cs", defaultLocale: "en", configured })
+      resolveLocaleChain({ requested: "cs", defaultLocale: "en", configured }),
     ).toEqual(["cs", "en"]);
   });
 
-  it("collapses to a single attempt when requested === default", () => {
+  it("normalizes separators and casing while preserving configured codes", () => {
     expect(
-      resolvePreviewLocales({ requested: "en", defaultLocale: "en", configured })
-    ).toEqual(["en"]);
+      resolveLocaleChain({
+        requested: "EN_us",
+        defaultLocale: "cs",
+        configured,
+      }),
+    ).toEqual(["en-US", "en", "cs"]);
+  });
+
+  it("falls back from an unavailable regional locale to its base and configured siblings", () => {
+    expect(
+      resolveLocaleChain({
+        requested: "en-GB",
+        defaultLocale: "cs",
+        configured,
+      }),
+    ).toEqual(["en", "en-US", "cs"]);
+  });
+
+  it("uses a preferred same-language variant before a different-language default", () => {
+    expect(
+      resolveLocaleChain({
+        requested: "en-AU",
+        defaultLocale: "cs",
+        sourceLocale: "cs",
+        configured: ["cs", "en-US", "en-GB"],
+        preferredVariants: { en: ["en-US", "en-GB"] },
+      }),
+    ).toEqual(["en-US", "en-GB", "cs"]);
+  });
+
+  it("accepts a base client tag and negotiates a configured regional variant", () => {
+    expect(
+      resolveLocaleChain({
+        requested: "en",
+        defaultLocale: "cs",
+        configured: ["cs", "en-US"],
+      }),
+    ).toEqual(["en-US", "cs"]);
+  });
+
+  it("preserves script-aware parent fallback", () => {
+    expect(
+      resolveLocaleChain({
+        requested: "sr-Latn-RS",
+        defaultLocale: "cs",
+        configured: ["cs", "sr", "sr-Latn", "sr-Cyrl"],
+      }),
+    ).toEqual(["sr-Latn", "sr", "sr-Cyrl", "cs"]);
+  });
+
+  it("deduplicates requested/default while retaining another same-language variant", () => {
+    expect(
+      resolveLocaleChain({ requested: "en", defaultLocale: "en", configured }),
+    ).toEqual(["en", "en-US"]);
   });
 
   it("drops an unsupported (unconfigured) requested locale → default only", () => {
     // 'fr' is not configured → never queried, avoids depending on how the
     // Document Service reacts to an unknown locale.
     expect(
-      resolvePreviewLocales({ requested: "fr", defaultLocale: "en", configured })
+      resolveLocaleChain({ requested: "fr", defaultLocale: "en", configured }),
     ).toEqual(["en"]);
   });
 
   it("falls back to default when no locale is requested", () => {
     expect(
-      resolvePreviewLocales({ requested: undefined, defaultLocale: "en", configured })
+      resolveLocaleChain({
+        requested: undefined,
+        defaultLocale: "en",
+        configured,
+      }),
     ).toEqual(["en"]);
     expect(
-      resolvePreviewLocales({ requested: null, defaultLocale: "en", configured })
+      resolveLocaleChain({ requested: null, defaultLocale: "en", configured }),
     ).toEqual(["en"]);
     expect(
-      resolvePreviewLocales({ requested: "", defaultLocale: "en", configured })
+      resolveLocaleChain({ requested: "", defaultLocale: "en", configured }),
     ).toEqual(["en"]);
   });
 
-  it("still returns the default even if the configured list is empty/misconfigured", () => {
+  it("fails instead of querying an unsupported default locale", () => {
+    expect(() =>
+      resolveLocaleChain({
+        requested: "cs",
+        defaultLocale: "en",
+        configured: [],
+      }),
+    ).toThrow("is not in the configured locale list");
+  });
+
+  it("does not depend on a hardcoded language", () => {
     expect(
-      resolvePreviewLocales({ requested: "cs", defaultLocale: "en", configured: [] })
-    ).toEqual(["en"]);
+      resolveLocaleChain({
+        requested: "xx-ZZ",
+        defaultLocale: "pl",
+        configured: ["pl"],
+      }),
+    ).toEqual(["pl"]);
+  });
+
+  it("adds the document source locale after a distinct default", () => {
+    expect(
+      resolveLocaleChain({
+        requested: "fr-FR",
+        defaultLocale: "en",
+        sourceLocale: "cs",
+        configured: ["cs", "en"],
+      }),
+    ).toEqual(["en", "cs"]);
+  });
+
+  it("rejects a source locale which Strapi does not have configured", () => {
+    expect(() =>
+      resolveLocaleChain({
+        requested: "en",
+        defaultLocale: "en",
+        sourceLocale: "cs",
+        configured: ["en"],
+      }),
+    ).toThrow("source locale cs is not in the configured locale list");
   });
 
   it("never yields duplicate attempts (each locale queried at most once)", () => {
-    const out = resolvePreviewLocales({
+    const out = resolveLocaleChain({
       requested: "cs",
       defaultLocale: "cs",
       configured,

@@ -13,7 +13,11 @@ import {
 import { mapWithConcurrency } from "../../../utils/concurrency";
 import { haversineMeters, isValidOrigin } from "../../../utils/geo";
 import { normalizeSearchText } from "../../../utils/search";
-import { resolvePreviewLocales } from "../../../utils/locale";
+import {
+  canonicalizeLocaleTag,
+  resolveLocaleChain,
+  type PreferredLocaleVariants,
+} from "../../../utils/locale";
 
 const SPRING_UID = "api::spring.spring";
 
@@ -40,6 +44,13 @@ interface I18nLocale {
   code: string;
 }
 
+interface LocalizedSpringRow {
+  documentId: string;
+  locale: string;
+  source_locale: string;
+  [key: string]: unknown;
+}
+
 /** The published Spring row shape read by `preview` (teaser fields only). */
 interface SpringPreviewRow {
   documentId: string;
@@ -58,35 +69,116 @@ interface SpringPreviewRow {
   } | null;
 }
 
-/** Resolves the configured default locale dynamically (falls back to en). */
+/** Resolves the configured default locale dynamically. Failures stay visible. */
 async function getDefaultLocale(strapi: Core.Strapi): Promise<string> {
-  try {
-    const code = await strapi
-      .plugin("i18n")
-      .service("locales")
-      .getDefaultLocale();
-    return code || "en";
-  } catch {
-    return "en";
+  const code = await strapi
+    .plugin("i18n")
+    .service("locales")
+    .getDefaultLocale();
+
+  if (!code) {
+    throw new Error("Strapi i18n default locale is not configured");
   }
+
+  return code;
 }
 
-/** Resolves all configured locales; falls back to the default locale. */
+/** Resolves all configured locale codes. Failures stay visible. */
 async function getConfiguredLocales(strapi: Core.Strapi): Promise<string[]> {
-  try {
-    const locales = (await strapi
-      .plugin("i18n")
-      .service("locales")
-      .find()) as I18nLocale[];
-    const localeCodes = locales.map((locale) => locale.code).filter(Boolean);
-    if (localeCodes.length > 0) {
-      return localeCodes;
-    }
-  } catch {
-    // Fall back below.
+  const locales = (await strapi
+    .plugin("i18n")
+    .service("locales")
+    .find()) as I18nLocale[];
+  return locales.map((locale) => locale.code).filter(Boolean);
+}
+
+function getPreferredLocaleVariants(
+  strapi: Core.Strapi,
+): PreferredLocaleVariants {
+  const configured = strapi.config?.get(
+    "locale-fallbacks.preferredVariants",
+    {},
+  );
+  if (
+    !configured ||
+    typeof configured !== "object" ||
+    Array.isArray(configured)
+  ) {
+    return {};
+  }
+  return configured as PreferredLocaleVariants;
+}
+
+async function getSpringSourceLocale(
+  strapi: Core.Strapi,
+  documentId: string,
+): Promise<string | null> {
+  const row = (await strapi.db.query(SPRING_UID).findOne({
+    where: { documentId },
+    select: ["documentId", "source_locale"],
+    orderBy: { id: "asc" },
+  })) as { documentId: string; source_locale?: string | null } | null;
+
+  if (!row) {
+    return null;
+  }
+  if (!row.source_locale) {
+    throw new Error(`Spring ${documentId} has no source_locale`);
+  }
+  return row.source_locale;
+}
+
+/**
+ * Chooses at most one complete published row per document. Selection is based
+ * solely on row existence; individual field values (including a null localized
+ * description) never trigger another fallback attempt.
+ */
+function selectLocalizedSpringRows<T extends LocalizedSpringRow>(params: {
+  rows: T[];
+  requested?: string;
+  defaultLocale: string;
+  configured: string[];
+  preferredVariants: PreferredLocaleVariants;
+}): Array<Omit<T, "source_locale">> {
+  const { rows, requested, defaultLocale, configured, preferredVariants } =
+    params;
+  const byDocument = new Map<string, T[]>();
+  for (const row of rows) {
+    const group = byDocument.get(row.documentId) ?? [];
+    group.push(row);
+    byDocument.set(row.documentId, group);
   }
 
-  return [await getDefaultLocale(strapi)];
+  const selected: Array<Omit<T, "source_locale">> = [];
+  for (const [documentId, variants] of byDocument) {
+    const sourceLocales = [
+      ...new Set(variants.map((row) => row.source_locale).filter(Boolean)),
+    ];
+    if (sourceLocales.length !== 1) {
+      throw new Error(
+        `Spring ${documentId} must have exactly one source_locale; found ${sourceLocales.length}`,
+      );
+    }
+
+    const attempts = resolveLocaleChain({
+      requested,
+      defaultLocale,
+      sourceLocale: sourceLocales[0],
+      configured,
+      preferredVariants,
+    });
+    const variantsByLocale = new Map(
+      variants.map((row) => [canonicalizeLocaleTag(row.locale), row]),
+    );
+    const row = attempts
+      .map((locale) => variantsByLocale.get(canonicalizeLocaleTag(locale)))
+      .find((candidate): candidate is T => Boolean(candidate));
+    if (row) {
+      const { source_locale: _sourceLocale, ...publicRow } = row;
+      selected.push(publicRow as Omit<T, "source_locale">);
+    }
+  }
+  return selected;
 }
 
 function hasNameSearchField(strapi: Core.Strapi): boolean {
@@ -98,7 +190,7 @@ function hasNameSearchField(strapi: Core.Strapi): boolean {
 
 function springDataWithSearchName<T extends Record<string, unknown>>(
   strapi: Core.Strapi,
-  data: T
+  data: T,
 ): T & { name_search?: string } {
   if (hasNameSearchField(strapi) && typeof data.name === "string") {
     return { ...data, name_search: normalizeSearchText(data.name) };
@@ -164,18 +256,18 @@ export default factories.createCoreService(SPRING_UID, ({ strapi }) => ({
     });
 
     strapi.log.debug(
-      `refreshLatest: Spring ${springDocumentId} → ${newStatus} (draft+published)`
+      `refreshLatest: Spring ${springDocumentId} → ${newStatus} (draft+published)`,
     );
   },
 
   /**
    * Map query — returns only the minimal PUBLIC fields needed to render markers
-   * within a bounding box. No report history, no private data. Reads the
-   * published, default-locale rows so the hot map path stays cheap.
+   * within a bounding box. No report history, no private data. Reads published
+   * locale rows once, then selects exactly one whole variant per document.
    *
    * @param bbox "minLng,minLat,maxLng,maxLat"
    */
-  async findInBbox(bbox: string | undefined) {
+  async findInBbox(bbox: string | undefined, requestedLocale?: string) {
     if (!bbox || typeof bbox !== "string") {
       return [];
     }
@@ -184,16 +276,37 @@ export default factories.createCoreService(SPRING_UID, ({ strapi }) => ({
       return [];
     }
 
-    const locale = await getDefaultLocale(strapi);
-    return strapi.documents(SPRING_UID).findMany({
-      filters: {
+    const [defaultLocale, configured] = await Promise.all([
+      getDefaultLocale(strapi),
+      getConfiguredLocales(strapi),
+    ]);
+    const rows = (await strapi.db.query(SPRING_UID).findMany({
+      where: {
         lat: { $gte: minLat, $lte: maxLat },
         lng: { $gte: minLng, $lte: maxLng },
+        publishedAt: { $notNull: true },
+        locale: { $in: configured },
       },
-      // Only map-safe fields (documentId is always included by the Document Service).
-      fields: ["name", "lat", "lng", "current_status", "status_updated_at"],
-      status: "published",
-      locale,
+      // Explicit allowlist: Query Engine is used to load all locale rows in one
+      // query, then one whole row per document is selected below.
+      select: [
+        "documentId",
+        "name",
+        "lat",
+        "lng",
+        "current_status",
+        "status_updated_at",
+        "locale",
+        "source_locale",
+      ],
+    })) as LocalizedSpringRow[];
+
+    return selectLocalizedSpringRows({
+      rows,
+      requested: requestedLocale,
+      defaultLocale,
+      configured,
+      preferredVariants: getPreferredLocaleVariants(strapi),
     });
   },
 
@@ -207,7 +320,9 @@ export default factories.createCoreService(SPRING_UID, ({ strapi }) => ({
    * `distance_m` and proximity ordering ("nearest first"). Without an origin,
    * results are alphabetical.
    *
-   * Reads published, requested-locale rows. Name match is case-insensitive,
+   * Searches every published locale row because the official Spring name is
+   * canonical and non-localized, deduplicates by documentId, then chooses one
+   * whole variant with the shared locale fallback. Name match is case-insensitive,
    * accent-insensitive when the internal `name_search` field exists, and partial
    * (`$containsi`). A candidate cap bounds the in-JS distance sort on broad
    * queries; queries shorter than `SEARCH_MIN_QUERY` return [].
@@ -229,46 +344,112 @@ export default factories.createCoreService(SPRING_UID, ({ strapi }) => ({
     const requestedLimit = Number.isFinite(params.limit as number)
       ? (params.limit as number)
       : SEARCH_DEFAULT_LIMIT;
-    const limit = Math.min(
-      Math.max(1, requestedLimit),
-      SEARCH_MAX_LIMIT
-    );
-    const locale = params.locale || (await getDefaultLocale(strapi));
+    const limit = Math.min(Math.max(1, requestedLimit), SEARCH_MAX_LIMIT);
+    const [defaultLocale, configured] = await Promise.all([
+      getDefaultLocale(strapi),
+      getConfiguredLocales(strapi),
+    ]);
     const searchField = searchByNormalizedName ? "name_search" : "name";
 
-    const candidates = (await strapi.documents(SPRING_UID).findMany({
-      filters: { [searchField]: { $containsi: q } },
+    const rows = (await strapi.db.query(SPRING_UID).findMany({
+      where: {
+        [searchField]: { $containsi: q },
+        publishedAt: { $notNull: true },
+        locale: { $in: configured },
+      },
       // Same allowlist as the bbox map path — no history, no private data.
-      fields: ["name", "lat", "lng", "current_status", "status_updated_at"],
-      status: "published",
-      locale,
-      sort: { name: "asc" },
-      limit: SEARCH_CANDIDATE_CAP,
-    })) as Array<{ lat: number | string; lng: number | string }>;
+      select: [
+        "documentId",
+        "name",
+        "lat",
+        "lng",
+        "current_status",
+        "status_updated_at",
+        "locale",
+        "source_locale",
+      ],
+      orderBy: { name: "asc" },
+      // The semantic cap is applied after locale rows are deduplicated. This
+      // physical cap leaves room for every configured localization per result.
+      limit: SEARCH_CANDIDATE_CAP * Math.max(1, configured.length),
+    })) as LocalizedSpringRow[];
+    const candidates = selectLocalizedSpringRows({
+      rows,
+      requested: params.locale,
+      defaultLocale,
+      configured,
+      preferredVariants: getPreferredLocaleVariants(strapi),
+    }).slice(0, SEARCH_CANDIDATE_CAP) as Array<
+      Omit<LocalizedSpringRow, "source_locale"> & {
+        lat: number | string;
+        lng: number | string;
+      }
+    >;
 
     if (!isValidOrigin(params.lat, params.lng)) {
       return candidates.slice(0, limit);
     }
 
-    return candidates
-      .map((s) => ({
-        ...s,
-        distance_m: Math.round(
-          haversineMeters(
-            params.lat as number,
-            params.lng as number,
-            Number(s.lat),
-            Number(s.lng)
-          )
-        ),
-      }))
-      // Rows with an unparseable coordinate sink to the bottom.
-      .sort(
-        (a, b) =>
-          (Number.isNaN(a.distance_m) ? Infinity : a.distance_m) -
-          (Number.isNaN(b.distance_m) ? Infinity : b.distance_m)
-      )
-      .slice(0, limit);
+    return (
+      candidates
+        .map((s) => ({
+          ...s,
+          distance_m: Math.round(
+            haversineMeters(
+              params.lat as number,
+              params.lng as number,
+              Number(s.lat),
+              Number(s.lng),
+            ),
+          ),
+        }))
+        // Rows with an unparseable coordinate sink to the bottom.
+        .sort(
+          (a, b) =>
+            (Number.isNaN(a.distance_m) ? Infinity : a.distance_m) -
+            (Number.isNaN(b.distance_m) ? Infinity : b.distance_m),
+        )
+        .slice(0, limit)
+    );
+  },
+
+  /**
+   * Core-detail lookup with document-level locale fallback while preserving
+   * the sanitized core query (`fields`, `populate`, `status`, ...).
+   */
+  async findOneWithLocaleFallback(
+    documentId: string,
+    params: Record<string, any> = {},
+  ) {
+    const requestedLocale =
+      typeof params.locale === "string" ? params.locale : undefined;
+    const { locale: _locale, ...query } = params;
+    const [defaultLocale, configured, sourceLocale] = await Promise.all([
+      getDefaultLocale(strapi),
+      getConfiguredLocales(strapi),
+      getSpringSourceLocale(strapi, documentId),
+    ]);
+    const attempts = resolveLocaleChain({
+      requested: requestedLocale,
+      defaultLocale,
+      sourceLocale,
+      configured,
+      preferredVariants: getPreferredLocaleVariants(strapi),
+    });
+
+    for (const locale of attempts) {
+      const entity = await strapi.documents(SPRING_UID).findOne({
+        ...query,
+        documentId,
+        status: query.status ?? "published",
+        locale,
+      });
+      if (entity) {
+        return entity;
+      }
+    }
+
+    return null;
   },
 
   /**
@@ -338,28 +519,31 @@ export default factories.createCoreService(SPRING_UID, ({ strapi }) => ({
    * missing values, notably the not-yet-sent photo).
    *
    * Locale fallback: a shared web link must not die because of language. We
-   * build an ordered attempt list with `resolvePreviewLocales` — the requested
-   * locale (only if it is actually configured) then the default locale — and
+   * build an ordered attempt list with `resolveLocaleChain` — exact requested
+   * locale, its parents/same-language variants, default and source locale — and
    * query each until one hits. So an unsupported/garbage locale from a share URL
    * is never passed to the Document Service (behaviour never depends on how it
    * reacts to an unknown locale), and a spring published only in the default
-   * locale is still served. Only a spring missing/unpublished in the DEFAULT
-   * locale too yields null → the controller answers 404. The actually served
-   * locale is returned as `locale` so the web knows which language it got.
+   * locale is still served. A Spring missing/unpublished in every attempted
+   * locale yields null → the controller answers 404. The actually served locale
+   * is returned as `locale` so the web knows which language it got.
    */
   async preview(documentId: string, locale?: string) {
     if (!documentId) {
       return null;
     }
 
-    const [defaultLocale, configured] = await Promise.all([
+    const [defaultLocale, configured, sourceLocale] = await Promise.all([
       getDefaultLocale(strapi),
       getConfiguredLocales(strapi),
+      getSpringSourceLocale(strapi, documentId),
     ]);
-    const attempts = resolvePreviewLocales({
+    const attempts = resolveLocaleChain({
       requested: locale,
       defaultLocale,
+      sourceLocale,
       configured,
+      preferredVariants: getPreferredLocaleVariants(strapi),
     });
 
     const queryPreview = (loc: string) =>

@@ -21,8 +21,8 @@ import springServiceFactory from "../../src/api/spring/services/spring";
  *
  * We instantiate the real service factory with a mock `strapi`, stubbing only
  * `strapi.documents().findOne` and the i18n locale services. This exercises the
- * actual locale-fallback loop (requested → default) and the returned
- * `servedLocale`, complementing the pure `resolvePreviewLocales` unit tests.
+ * actual locale-fallback loop (exact/parents → siblings → default → source) and the returned
+ * `servedLocale`, complementing the pure `resolveLocaleChain` unit tests.
  */
 
 const sampleRow = () => ({
@@ -37,25 +37,42 @@ const sampleRow = () => ({
 });
 
 function buildService(opts: {
-  findOne: (args: { locale: string; documentId: string; fields: string[] }) => Promise<unknown>;
+  findOne: (args: {
+    locale: string;
+    documentId: string;
+    fields: string[];
+  }) => Promise<unknown>;
   defaultLocale?: string;
   configured?: string[];
+  sourceLocale?: string;
 }) {
   const localesService = {
     getDefaultLocale: vi.fn(async () => opts.defaultLocale ?? "en"),
     find: vi.fn(async () =>
-      (opts.configured ?? ["cs", "en"]).map((code) => ({ code }))
+      (opts.configured ?? ["cs", "en"]).map((code) => ({ code })),
     ),
   };
   const findOne = vi.fn(opts.findOne);
   const strapi = {
     documents: () => ({ findOne }),
+    db: {
+      query: () => ({
+        findOne: async ({ where }: { where: { documentId: string } }) => ({
+          documentId: where.documentId,
+          source_locale: opts.sourceLocale ?? "cs",
+        }),
+      }),
+    },
+    config: { get: () => ({ en: ["en-US", "en-GB"] }) },
     plugin: () => ({ service: () => localesService }),
     log: { debug() {}, info() {}, warn() {}, error() {} },
   } as never;
 
   const service = springServiceFactory({ strapi }) as unknown as {
-    preview: (documentId: string, locale?: string) => Promise<Record<string, unknown> | null>;
+    preview: (
+      documentId: string,
+      locale?: string,
+    ) => Promise<Record<string, unknown> | null>;
   };
   return { service, findOne };
 }
@@ -89,6 +106,54 @@ describe("spring.preview — service contract", () => {
     expect(findOne.mock.calls[0][0].locale).toBe("cs"); // requested first
     expect(findOne.mock.calls[1][0].locale).toBe("en"); // then default
     expect(res?.locale).toBe("en");
+  });
+
+  it("falls back from a regional locale to its configured base language", async () => {
+    const { service, findOne } = buildService({
+      defaultLocale: "cs",
+      configured: ["cs", "en", "en-US"],
+      findOne: async ({ locale }) => (locale === "en" ? sampleRow() : null),
+    });
+
+    const res = await service.preview("doc1", "en-US");
+
+    expect(findOne.mock.calls.map(([query]) => query.locale)).toEqual([
+      "en-US",
+      "en",
+    ]);
+    expect(res?.locale).toBe("en");
+  });
+
+  it("falls back from en-AU to a configured en-US sibling before Czech", async () => {
+    const { service, findOne } = buildService({
+      defaultLocale: "cs",
+      configured: ["cs", "en-US"],
+      findOne: async ({ locale }) => (locale === "en-US" ? sampleRow() : null),
+    });
+
+    const res = await service.preview("doc1", "en-AU");
+
+    expect(findOne.mock.calls.map(([query]) => query.locale)).toEqual([
+      "en-US",
+    ]);
+    expect(res?.locale).toBe("en-US");
+  });
+
+  it("uses the source locale after a missing different-language default", async () => {
+    const { service, findOne } = buildService({
+      defaultLocale: "en",
+      configured: ["cs", "en"],
+      sourceLocale: "cs",
+      findOne: async ({ locale }) => (locale === "cs" ? sampleRow() : null),
+    });
+
+    const res = await service.preview("doc1", "de-DE");
+
+    expect(findOne.mock.calls.map(([query]) => query.locale)).toEqual([
+      "en",
+      "cs",
+    ]);
+    expect(res?.locale).toBe("cs");
   });
 
   it("never queries an unsupported (unconfigured) locale — goes straight to default", async () => {
@@ -131,7 +196,9 @@ describe("spring.preview — service contract", () => {
   });
 
   it("returns null for an empty documentId without querying", async () => {
-    const { service, findOne } = buildService({ findOne: async () => sampleRow() });
+    const { service, findOne } = buildService({
+      findOne: async () => sampleRow(),
+    });
 
     const res = await service.preview("");
 

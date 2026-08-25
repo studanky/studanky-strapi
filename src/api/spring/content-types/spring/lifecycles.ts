@@ -3,20 +3,95 @@ import * as fs from "fs";
 import * as path from "path";
 import * as os from "os";
 import { normalizeSearchText } from "../../../../utils/search";
+import { canonicalizeLocaleTag } from "../../../../utils/locale";
 
 const SPRING_UID = "api::spring.spring";
+const CHMU_SOURCE_LOCALE = "cs";
 
 const syncNameSearch = (data: Record<string, unknown>) => {
   const attributes = strapi.contentTypes[SPRING_UID]?.attributes as
     | Record<string, unknown>
     | undefined;
 
-  if (
-    typeof data.name === "string" &&
-    attributes?.["name_search"]
-  ) {
+  if (typeof data.name === "string" && attributes?.["name_search"]) {
     data.name_search = normalizeSearchText(data.name);
   }
+};
+
+const canonicalSourceLocale = (value: unknown): string => {
+  const canonical = canonicalizeLocaleTag(
+    typeof value === "string" ? value : undefined,
+  );
+  if (!canonical) {
+    throw new Error("Spring source_locale must be a valid locale code");
+  }
+  return canonical;
+};
+
+/**
+ * Source locale belongs to the whole document and is assigned exactly once.
+ * Publication clones/localizations keep the already persisted value; a new
+ * ČHMÚ document is always Czech, and any other new document uses the locale in
+ * which it was first created (or the then-current Strapi default).
+ */
+const ensureSourceLocaleOnCreate = async (data: Record<string, unknown>) => {
+  if (typeof data.source_locale === "string" && data.source_locale.trim()) {
+    data.source_locale = canonicalSourceLocale(data.source_locale);
+    return;
+  }
+
+  const documentId =
+    typeof data.documentId === "string" ? data.documentId : undefined;
+  if (documentId) {
+    const existing = (await strapi.db.query(SPRING_UID).findOne({
+      where: { documentId },
+      select: ["source_locale"],
+      orderBy: { id: "asc" },
+    })) as { source_locale?: string | null } | null;
+    if (existing?.source_locale) {
+      data.source_locale = canonicalSourceLocale(existing.source_locale);
+      return;
+    }
+  }
+
+  if (data.external_source === "chmu") {
+    data.source_locale = CHMU_SOURCE_LOCALE;
+    return;
+  }
+
+  const creationLocale =
+    typeof data.locale === "string"
+      ? data.locale
+      : await strapi.plugin("i18n").service("locales").getDefaultLocale();
+  data.source_locale = canonicalSourceLocale(creationLocale);
+};
+
+const preventSourceLocaleChange = async (event: {
+  params: {
+    data: Record<string, unknown>;
+    where?: Record<string, unknown>;
+  };
+}) => {
+  const { data, where } = event.params;
+  if (!Object.prototype.hasOwnProperty.call(data, "source_locale")) {
+    return;
+  }
+
+  const requested = canonicalSourceLocale(data.source_locale);
+  const existing = where
+    ? ((await strapi.db.query(SPRING_UID).findOne({
+        where,
+        select: ["source_locale"],
+      })) as { source_locale?: string | null } | null)
+    : null;
+
+  if (
+    existing?.source_locale &&
+    canonicalSourceLocale(existing.source_locale) !== requested
+  ) {
+    throw new Error("Spring source_locale is immutable after creation");
+  }
+  data.source_locale = existing?.source_locale ?? requested;
 };
 
 /**
@@ -53,10 +128,17 @@ export function shouldGenerateQr(args: {
 export default {
   async beforeCreate(event: { params: { data: Record<string, unknown> } }) {
     syncNameSearch(event.params.data);
+    await ensureSourceLocaleOnCreate(event.params.data);
   },
 
-  async beforeUpdate(event: { params: { data: Record<string, unknown> } }) {
+  async beforeUpdate(event: {
+    params: {
+      data: Record<string, unknown>;
+      where?: Record<string, unknown>;
+    };
+  }) {
     syncNameSearch(event.params.data);
+    await preventSourceLocaleChange(event);
   },
 
   async afterCreate(event: {
@@ -97,7 +179,7 @@ export default {
       })
     ) {
       strapi.log.debug(
-        `Spring ${documentId}: QR code already exists, skipping generation`
+        `Spring ${documentId}: QR code already exists, skipping generation`,
       );
       return;
     }
@@ -145,14 +227,14 @@ export default {
         });
 
       strapi.log.info(
-        `Spring ${documentId}: QR code uploaded successfully (file id: ${uploadedFiles[0]?.id})`
+        `Spring ${documentId}: QR code uploaded successfully (file id: ${uploadedFiles[0]?.id})`,
       );
     } catch (error) {
       // Log the error but don't throw - let the Spring creation succeed
       // even if QR code generation fails
       strapi.log.error(
         `Spring ${documentId}: Failed to generate/upload QR code`,
-        error
+        error,
       );
     } finally {
       // Clean up temp file
