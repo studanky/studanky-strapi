@@ -1,5 +1,9 @@
 import { describe, it, expect } from "vitest";
-import { resolveLocaleChain } from "../../src/utils/locale";
+import {
+  findConfiguredLocale,
+  indexConfiguredLocales,
+  resolveLocaleChain,
+} from "../../src/utils/locale";
 
 const configured = ["cs", "en", "en-US", "de"];
 
@@ -18,6 +22,21 @@ describe("resolveLocaleChain", () => {
         configured,
       }),
     ).toEqual(["en-US", "en", "cs"]);
+  });
+
+  it("shares a prebuilt configured index between chain and direct lookups", () => {
+    const configuredByCanonical = indexConfiguredLocales(["cs", "en_US"]);
+
+    expect(
+      resolveLocaleChain({
+        requested: "EN-us",
+        defaultLocale: "cs",
+        configured: configuredByCanonical,
+      }),
+    ).toEqual(["en_US", "cs"]);
+    expect(findConfiguredLocale("en-US", configuredByCanonical)).toBe(
+      "en_US",
+    );
   });
 
   it("falls back from an unavailable regional locale to its base and configured siblings", () => {

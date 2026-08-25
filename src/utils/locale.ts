@@ -8,6 +8,8 @@
  */
 
 export type PreferredLocaleVariants = Record<string, string[]>;
+export type ConfiguredLocaleIndex = ReadonlyMap<string, string>;
+export type LocaleCanonicalizer = (locale: string) => string | null;
 
 /** Returns a canonical BCP 47 tag, or null for an empty/invalid input. */
 export function canonicalizeLocaleTag(value?: string | null): string | null {
@@ -20,6 +22,32 @@ export function canonicalizeLocaleTag(value?: string | null): string | null {
   } catch {
     return null;
   }
+}
+
+/** Builds the canonical-to-configured spelling index used by all resolvers. */
+export function indexConfiguredLocales(
+  configured: string[],
+  canonicalize: LocaleCanonicalizer = canonicalizeLocaleTag,
+): Map<string, string> {
+  const lookup = new Map<string, string>();
+  for (const locale of configured) {
+    const canonical = canonicalize(locale);
+    if (!canonical) {
+      throw new Error(`Strapi i18n locale ${String(locale)} is invalid`);
+    }
+    lookup.set(canonical, locale);
+  }
+  return lookup;
+}
+
+/** Matches any accepted spelling against a prevalidated configured index. */
+export function findConfiguredLocale(
+  locale: string,
+  configuredByCanonical: ConfiguredLocaleIndex,
+  canonicalize: LocaleCanonicalizer = canonicalizeLocaleTag,
+): string | undefined {
+  const canonical = canonicalize(locale);
+  return canonical ? configuredByCanonical.get(canonical) : undefined;
 }
 
 function localeLanguage(value: string): string {
@@ -38,29 +66,28 @@ function localeLanguage(value: string): string {
  * Only configured Strapi locale codes are ever returned. Configured spelling
  * is preserved for Document Service / Query Engine calls. A present document
  * wins as a whole; callers must never continue merely because a field is null.
+ * Callers that also resolve document metadata may pass a prebuilt index so the
+ * same validated canonical mapping is reused for the entire request.
  */
 export function resolveLocaleChain(params: {
   requested?: string | null;
   defaultLocale: string;
-  configured: string[];
+  configured: string[] | ConfiguredLocaleIndex;
   preferredVariants?: PreferredLocaleVariants;
 }): string[] {
   const { requested, defaultLocale, configured, preferredVariants = {} } =
     params;
-
-  const configuredByCanonical = new Map<string, string>();
-  for (const locale of configured) {
-    const canonical = canonicalizeLocaleTag(locale);
-    if (!canonical) {
-      throw new Error(`Strapi i18n locale ${String(locale)} is invalid`);
-    }
-    configuredByCanonical.set(canonical, locale);
-  }
+  const configuredByCanonical = Array.isArray(configured)
+    ? indexConfiguredLocales(configured)
+    : configured;
 
   const chain: string[] = [];
   const addCanonical = (canonical: string | null) => {
     if (!canonical) return;
-    const configuredLocale = configuredByCanonical.get(canonical);
+    const configuredLocale = findConfiguredLocale(
+      canonical,
+      configuredByCanonical,
+    );
     if (configuredLocale) chain.push(configuredLocale);
   };
 
@@ -96,10 +123,10 @@ export function resolveLocaleChain(params: {
     }
   }
 
-  const canonicalDefault = canonicalizeLocaleTag(defaultLocale);
-  const configuredDefault = canonicalDefault
-    ? configuredByCanonical.get(canonicalDefault)
-    : undefined;
+  const configuredDefault = findConfiguredLocale(
+    defaultLocale,
+    configuredByCanonical,
+  );
   if (!configuredDefault) {
     throw new Error(
       `Strapi i18n default locale ${defaultLocale} is not in the configured locale list`,

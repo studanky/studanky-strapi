@@ -15,7 +15,10 @@ import { haversineMeters, isValidOrigin } from "../../../utils/geo";
 import { normalizeSearchText } from "../../../utils/search";
 import {
   canonicalizeLocaleTag,
+  findConfiguredLocale,
+  indexConfiguredLocales,
   resolveLocaleChain,
+  type ConfiguredLocaleIndex,
   type PreferredLocaleVariants,
 } from "../../../utils/locale";
 
@@ -127,32 +130,6 @@ interface SpringSourceMetadata {
   locale: string | null;
 }
 
-type LocaleCanonicalizer = (locale: string) => string | null;
-
-function indexConfiguredLocales(
-  configured: string[],
-  canonicalize: LocaleCanonicalizer = canonicalizeLocaleTag,
-): Map<string, string> {
-  const lookup = new Map<string, string>();
-  for (const locale of configured) {
-    const canonical = canonicalize(locale);
-    if (!canonical) {
-      throw new Error(`Strapi i18n locale ${locale} is invalid`);
-    }
-    lookup.set(canonical, locale);
-  }
-  return lookup;
-}
-
-function findConfiguredLocale(
-  locale: string,
-  configuredByCanonical: ReadonlyMap<string, string>,
-  canonicalize: LocaleCanonicalizer = canonicalizeLocaleTag,
-): string | undefined {
-  const canonical = canonicalize(locale);
-  return canonical ? configuredByCanonical.get(canonical) : undefined;
-}
-
 async function getSpringSourceMetadata(
   strapi: Core.Strapi,
   documentId: string,
@@ -180,7 +157,7 @@ function resolveSpringReadLocales(params: {
   documentId: string;
   requested?: string;
   defaultLocale: string;
-  configured: string[];
+  configuredByCanonical: ConfiguredLocaleIndex;
   preferredVariants: PreferredLocaleVariants;
   source: SpringSourceMetadata;
 }): string[] {
@@ -190,14 +167,14 @@ function resolveSpringReadLocales(params: {
     documentId,
     requested,
     defaultLocale,
-    configured,
+    configuredByCanonical,
     preferredVariants,
     source,
   } = params;
   const baseAttempts = resolveLocaleChain({
     requested,
     defaultLocale,
-    configured,
+    configured: configuredByCanonical,
     preferredVariants,
   });
 
@@ -213,7 +190,7 @@ function resolveSpringReadLocales(params: {
 
   const configuredSource = findConfiguredLocale(
     source.locale,
-    indexConfiguredLocales(configured),
+    configuredByCanonical,
   );
   if (!configuredSource) {
     strapi.log.error(
@@ -266,16 +243,6 @@ function selectLocalizedSpringRows<T extends LocalizedSpringRow>(params: {
   const { rows, requested, defaultLocale, configured, preferredVariants } =
     params;
 
-  // Validate request-wide i18n configuration before processing individual
-  // documents. A broken global default/configured locale list must stay a
-  // visible server error rather than degrading into an empty map.
-  const baseAttempts = resolveLocaleChain({
-    requested,
-    defaultLocale,
-    configured,
-    preferredVariants,
-  });
-
   // Locale parsing is synchronous ICU work. Cache it for this request so the
   // hot map/search path does not repeat it for every physical locale row.
   const canonicalCache = new Map<string, string | null>();
@@ -289,6 +256,17 @@ function selectLocalizedSpringRows<T extends LocalizedSpringRow>(params: {
     configured,
     canonicalizeCached,
   );
+
+  // Validate request-wide i18n configuration before processing individual
+  // documents. A broken global default/configured locale list must stay a
+  // visible server error rather than degrading into an empty map. Reuse the
+  // same index later for every document's source-locale lookup.
+  const baseAttempts = resolveLocaleChain({
+    requested,
+    defaultLocale,
+    configured: configuredByCanonical,
+    preferredVariants,
+  });
   const attemptsBySource = new Map<string, string[]>();
 
   const byDocument = new Map<string, T[]>();
@@ -608,13 +586,14 @@ export default factories.createCoreService(SPRING_UID, ({ strapi }) => ({
       getConfiguredLocales(strapi),
       getSpringSourceMetadata(strapi, documentId),
     ]);
+    const configuredByCanonical = indexConfiguredLocales(configured);
     const attempts = resolveSpringReadLocales({
       strapi,
       endpoint: "detail",
       documentId,
       requested: requestedLocale,
       defaultLocale,
-      configured,
+      configuredByCanonical,
       preferredVariants: getPreferredLocaleVariants(strapi),
       source,
     });
@@ -720,13 +699,14 @@ export default factories.createCoreService(SPRING_UID, ({ strapi }) => ({
       getConfiguredLocales(strapi),
       getSpringSourceMetadata(strapi, documentId),
     ]);
+    const configuredByCanonical = indexConfiguredLocales(configured);
     const attempts = resolveSpringReadLocales({
       strapi,
       endpoint: "preview",
       documentId,
       requested: locale,
       defaultLocale,
-      configured,
+      configuredByCanonical,
       preferredVariants: getPreferredLocaleVariants(strapi),
       source,
     });
