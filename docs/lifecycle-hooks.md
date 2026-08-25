@@ -16,8 +16,18 @@ This document describes custom lifecycle hooks in this Strapi application.
 `cs`; a manually authored document uses its first creation locale (or the
 then-current i18n default when omitted). Creating publication/localization rows
 preserves the existing document value. `beforeUpdate` rejects changing an
-already assigned source locale. This metadata is the final document-level read
-fallback and is never exposed by the public API.
+already assigned source locale with a Strapi validation error (HTTP 400 in the
+Content Manager API). A stale non-localized sync carrying `source_locale: null`
+cannot erase an established value. If an imported legacy row is already null,
+an unrelated editor update is allowed without writing that null back; operations
+must repair it using the documented database audit. This metadata is the final
+document-level read fallback and is never exposed by the public API.
+
+The field cannot be schema-level `required` while it is derived here: Strapi
+Document Service validates required creation fields before the database
+`beforeCreate` lifecycle. Migration, create assignment, update protection and
+deployment audits jointly enforce the invariant without breaking normal Admin
+UI creation.
 
 ### Search Name Synchronization
 
@@ -98,12 +108,12 @@ Example content when scanned: `g39qdkl2c0ptrpl081d8kcvd`
 
 #### Configuration
 
-| Setting | Value |
-|---------|-------|
-| Image Size | 512×512 pixels |
-| Format | PNG |
+| Setting          | Value                   |
+| ---------------- | ----------------------- |
+| Image Size       | 512×512 pixels          |
+| Format           | PNG                     |
 | Error Correction | High (H) — 30% recovery |
-| Margin | 2 modules |
+| Margin           | 2 modules               |
 
 #### Dependencies
 
@@ -131,9 +141,9 @@ Deploy the lifecycle fix **before** running it, otherwise the next nightly sync
 recreates fresh orphans.
 
 **Reaching one QR per spring takes two passes.** Legacy springs affected by the
-old bug have *two* still-linked QR files — the draft's and the current
+old bug have _two_ still-linked QR files — the draft's and the current
 published's (different files, same encoded `documentId`). The orphan cleanup only
-removes *unlinked* files, so a single run right after deploy leaves those two in
+removes _unlinked_ files, so a single run right after deploy leaves those two in
 place. On the next fixed sync, `publish()` clones the draft's QR onto the new
 published row and deletes the old published row, orphaning its file; a **second
 cleanup run** then removes it, leaving one file per spring:
@@ -151,12 +161,14 @@ Library. Springs created after the fix have exactly one file from the start.
 #### Logs
 
 Successful generation:
+
 ```
 [info] Spring <documentId>: Generating QR code...
 [info] Spring <documentId>: QR code uploaded successfully (file id: <id>)
 ```
 
 Error case:
+
 ```
 [error] Spring <documentId>: Failed to generate/upload QR code <error details>
 ```

@@ -31,6 +31,13 @@ follows [Semantic Versioning](https://semver.org/).
   which they were first created. Preferred ambiguous English siblings are
   configured as `en-US`, then `en-GB`, with all other same-language variants
   following deterministically.
+- Map/search isolate and log a Spring with corrupt source-locale metadata
+  instead of failing the entire aggregate response. Request-wide i18n
+  configuration errors remain visible, and locale parsing/fallback chains are
+  cached within each request.
+- Source-locale lifecycle validation now reports editor changes as a Strapi
+  validation error and tolerates legacy non-localized sync payloads carrying an
+  unchanged null value without allowing them to erase an established source.
 
 ### Migration
 
@@ -42,6 +49,8 @@ follows [Semantic Versioning](https://semver.org/).
   modify locale, publication state, timestamps, or relations.
 - The migration fails if the default locale cannot be determined or a
   document/publication-state group lacks exactly one default-locale row.
+  Its core-store lookup matches Strapi's unscoped `environment IS NULL` and
+  `tag IS NULL` semantics; preflight diagnostic SQL is documented.
 - Added `2026.08.25T00.00.00.spring-source-locale.js`, which creates and
   backfills `source_locale` without changing row counts, content, publication
   state, timestamps, or relations. It assigns ČHMÚ documents to `cs`, preserves

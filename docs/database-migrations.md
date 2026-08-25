@@ -38,6 +38,45 @@ The automated SQLite fixture test is
 the same migration against a temporary PostgreSQL database and an anonymized
 snapshot/count audit.
 
+### Preflight diagnostics
+
+Read the unscoped Strapi default locale first. The stored value is JSON, so a
+string locale is normally displayed with quotes, for example `"cs"`:
+
+```sql
+SELECT value
+FROM strapi_core_store_settings
+WHERE key = 'plugin_i18n_default_locale'
+  AND environment IS NULL
+  AND tag IS NULL;
+```
+
+Substitute that code for `<DEFAULT_LOCALE>` below. This portable SQLite and
+PostgreSQL query lists every draft/published group that would stop the
+canonical-name migration because it does not contain exactly one default row:
+
+```sql
+SELECT
+  document_id,
+  CASE
+    WHEN published_at IS NULL THEN 'draft'
+    ELSE 'published'
+  END AS publication_state,
+  COUNT(*) AS locale_rows,
+  SUM(CASE WHEN locale = '<DEFAULT_LOCALE>' THEN 1 ELSE 0 END) AS default_rows
+FROM springs
+GROUP BY
+  document_id,
+  CASE WHEN published_at IS NULL THEN 'draft' ELSE 'published' END
+HAVING SUM(CASE WHEN locale = '<DEFAULT_LOCALE>' THEN 1 ELSE 0 END) <> 1
+ORDER BY document_id, publication_state;
+```
+
+The result must be empty before deployment. If startup reports a failing
+`document_id`, create/repair its default draft or published variant, verify its
+canonical `name`, and restart the same application version. The failed
+transaction is not recorded as complete, so Strapi will retry it on startup.
+
 ## 1.5.0 Spring source-locale migration
 
 `database/migrations/2026.08.25T00.00.00.spring-source-locale.js` adds private,
@@ -59,18 +98,33 @@ relations do not change. Automated SQLite coverage lives in
 `tests/unit/spring-source-locale-migration.test.ts`; rehearse both 1.5.0
 migrations in filename order on PostgreSQL before production.
 
+After migration or data transfer, the following audit must also return no rows:
+
+```sql
+SELECT
+  document_id,
+  COUNT(*) AS physical_rows,
+  COUNT(source_locale) AS rows_with_source,
+  COUNT(DISTINCT source_locale) AS distinct_sources
+FROM springs
+GROUP BY document_id
+HAVING COUNT(source_locale) <> COUNT(*)
+   OR COUNT(DISTINCT source_locale) <> 1
+ORDER BY document_id;
+```
+
 Strapi does not support `down()` migrations. Back up SQLite/PostgreSQL before
 deployment; rollback is a database restore plus the previous application
 version. See the [localization deployment runbook](./localization.md#backend-150-deployment).
 
-| Table | Index | Type | Purpose |
-|---|---|---|---|
-| `springs` | `(external_source, external_id)` | index | fast ČHMÚ pairing lookup |
-| `springs` | `(lat, lng)` | index | map bbox query |
-| `springs` | `(status_updated_at)` | index | freshness / sorting |
-| `reports` | `(client_report_id)` | **UNIQUE** | offline-queue idempotence |
-| `reports` | `(reported_at)` | index | history sorting |
-| `newsletter_subscribers` | `(email_normalized)` | **UNIQUE** | newsletter subscribe idempotence / duplicate protection |
+| Table                    | Index                            | Type       | Purpose                                                 |
+| ------------------------ | -------------------------------- | ---------- | ------------------------------------------------------- |
+| `springs`                | `(external_source, external_id)` | index      | fast ČHMÚ pairing lookup                                |
+| `springs`                | `(lat, lng)`                     | index      | map bbox query                                          |
+| `springs`                | `(status_updated_at)`            | index      | freshness / sorting                                     |
+| `reports`                | `(client_report_id)`             | **UNIQUE** | offline-queue idempotence                               |
+| `reports`                | `(reported_at)`                  | index      | history sorting                                         |
+| `newsletter_subscribers` | `(email_normalized)`             | **UNIQUE** | newsletter subscribe idempotence / duplicate protection |
 
 ## Why springs pairing is NOT a unique index
 

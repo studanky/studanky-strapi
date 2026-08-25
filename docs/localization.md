@@ -3,13 +3,13 @@
 Spring is an i18n content type, but only genuinely linguistic content is
 localized:
 
-| Field | Localized | Ownership |
-|---|---:|---|
-| `name` | no | canonical official name, shared by all variants |
-| `name_search` | no | private normalized copy maintained by lifecycle hooks |
-| `description` | yes | translated editorial content |
-| `source_locale` | no | private immutable language of the original document |
-| coordinates, status, source metadata and media | no | shared document data |
+| Field                                          | Localized | Ownership                                             |
+| ---------------------------------------------- | --------: | ----------------------------------------------------- |
+| `name`                                         |        no | canonical official name, shared by all variants       |
+| `name_search`                                  |        no | private normalized copy maintained by lifecycle hooks |
+| `description`                                  |       yes | translated editorial content                          |
+| `source_locale`                                |        no | private immutable language of the original document   |
+| coordinates, status, source metadata and media |        no | shared document data                                  |
 
 The standard Strapi Admin UI is sufficient. Editors switch locale in Content
 Manager to edit `description`; `name_search` is private and not manually
@@ -29,6 +29,10 @@ schema and must not be changed only on production.
 - Map and search load only published rows and select one whole row per
   `documentId`. They do not lose Czech-only ČHMÚ documents after a default-locale
   change.
+- A Spring with corrupt/missing `source_locale` is logged and skipped only for
+  aggregate map/search responses, so one bad import row cannot take down every
+  marker. Detail and preview keep the invariant failure visible because their
+  blast radius is limited to the requested document.
 - Fallback is document-level. A present translation with an empty description
   is valid and does not trigger fallback.
 - Unsupported client locale codes are never sent to Strapi Document Service.
@@ -47,8 +51,15 @@ These concepts are intentionally separate:
 
 Do not delete a locale from **Settings → Internationalization** while any Spring
 uses it as `source_locale`. Migrate those documents to a valid source first;
-the resolver treats an unconfigured source as a visible invariant error rather
-than silently choosing an unrelated language.
+map/search log and omit an affected document, while detail/preview surface the
+invariant error rather than silently choosing an unrelated language.
+
+`source_locale` is intentionally not marked `required` in the content-type
+schema. Strapi Document Service validates required fields before database
+`beforeCreate` lifecycles run, while this value must be derived from the
+creation locale inside that lifecycle. The invariant is instead established by
+the transactional backfill, assigned on every create, protected on update, and
+audited with the SQL in [database migrations](./database-migrations.md).
 
 Existing non-localized fields are synchronized by Strapi to already-existing
 translations. Creating a brand-new ČHMÚ Spring, however, creates only its Czech
@@ -58,17 +69,17 @@ fabricate an empty English description.
 
 ## Custom-code locale audit
 
-| Code path | Current policy | Assessment |
-|---|---|---|
-| `syncFromChmu` | always writes configured `cs` and asserts `source_locale = cs` | locale belongs to the source, not the UI default |
-| map (`findInBbox`) | per-document full fallback over published bbox rows | one complete row per `documentId`; `locale` is optional |
-| search | canonical-name match across published rows, then per-document full fallback | stable deduplication; `locale` is active, not deprecated |
-| full detail / preview | exact/parents → same language → default → source | one whole document; null fields never continue fallback |
-| `refreshLatest` | raw-updates every locale row of one document | correct: status/timestamps/flow fields are non-localized |
-| Spring name lifecycle/bootstrap | rebuilds `name_search` for the affected/all physical rows | correct normalization; the one-time migration, not bootstrap, enforces canonical-name equality |
-| QR lifecycle | checks the draft in the event's locale | correct: avoids duplicate assets while preserving document identity |
-| 1.5.0 canonical-name migration | uses the default locale at migration time | safe under the locked 1.5.0 rollout precondition (`cs` is default); do not reuse it as a general source-locale rule after changing the default |
-| Report, Owner, Platform Config, Newsletter | content types are not localized | no Strapi i18n/default-locale coupling; newsletter `preferred_language` is communication metadata, not a content query locale |
+| Code path                                  | Current policy                                                              | Assessment                                                                                                                                     |
+| ------------------------------------------ | --------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| `syncFromChmu`                             | always writes configured `cs` and asserts `source_locale = cs`              | locale belongs to the source, not the UI default                                                                                               |
+| map (`findInBbox`)                         | per-document full fallback over published bbox rows                         | one complete row per `documentId`; `locale` is optional                                                                                        |
+| search                                     | canonical-name match across published rows, then per-document full fallback | stable deduplication; `locale` is active, not deprecated                                                                                       |
+| full detail / preview                      | exact/parents → same language → default → source                            | one whole document; null fields never continue fallback                                                                                        |
+| `refreshLatest`                            | raw-updates every locale row of one document                                | correct: status/timestamps/flow fields are non-localized                                                                                       |
+| Spring name lifecycle/bootstrap            | rebuilds `name_search` for the affected/all physical rows                   | correct normalization; the one-time migration, not bootstrap, enforces canonical-name equality                                                 |
+| QR lifecycle                               | checks the draft in the event's locale                                      | correct: avoids duplicate assets while preserving document identity                                                                            |
+| 1.5.0 canonical-name migration             | uses the default locale at migration time                                   | safe under the locked 1.5.0 rollout precondition (`cs` is default); do not reuse it as a general source-locale rule after changing the default |
+| Report, Owner, Platform Config, Newsletter | content types are not localized                                             | no Strapi i18n/default-locale coupling; newsletter `preferred_language` is communication metadata, not a content query locale                  |
 
 The generic core `GET /api/springs` collection handler still uses native Strapi
 i18n selection and does not perform this custom per-document fallback. App
@@ -102,8 +113,10 @@ their source locale. ČHMÚ sync intentionally never creates translations.
 2. Back up the development SQLite file and production PostgreSQL database.
 3. Pause the ČHMÚ cron and prevent old/new instances from overlapping.
 4. Deploy 1.5.0 and let its transactional migration finish before schema sync.
-5. Verify row/document counts, canonical names, source locales, document-level
-   fallback on all four endpoints, and the expected 88 local Springs.
+5. Run the canonical/default and source-locale diagnostic SQL from
+   [database migrations](./database-migrations.md), then verify row/document
+   counts, document-level fallback on all four endpoints, and the expected 88
+   local Springs.
 6. Re-enable the cron.
 
 Rollback requires restoring the database backup and previous application
