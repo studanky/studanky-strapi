@@ -29,10 +29,10 @@ schema and must not be changed only on production.
 - Map and search load only published rows and select one whole row per
   `documentId`. They do not lose Czech-only ČHMÚ documents after a default-locale
   change.
-- A Spring with corrupt/missing `source_locale` is logged and skipped only for
-  aggregate map/search responses, so one bad import row cannot take down every
-  marker. Detail and preview keep the invariant failure visible because their
-  blast radius is limited to the requested document.
+- A Spring with corrupt/missing `source_locale` is logged, but all four
+  endpoints still use the valid requested/parent/sibling/default portion of the
+  chain. Source metadata improves the final fallback; it is not a prerequisite
+  for reading an otherwise available published variant.
 - Fallback is document-level. A present translation with an empty description
   is valid and does not trigger fallback.
 - Unsupported client locale codes are never sent to Strapi Document Service.
@@ -51,8 +51,9 @@ These concepts are intentionally separate:
 
 Do not delete a locale from **Settings → Internationalization** while any Spring
 uses it as `source_locale`. Migrate those documents to a valid source first;
-map/search log and omit an affected document, while detail/preview surface the
-invariant error rather than silently choosing an unrelated language.
+all read endpoints log invalid source metadata and continue without that final
+fallback. They do not silently substitute an unrelated language beyond the
+normal requested-language and configured-default policy.
 
 `source_locale` is intentionally not marked `required` in the content-type
 schema. Strapi Document Service validates required fields before database
@@ -60,6 +61,12 @@ schema. Strapi Document Service validates required fields before database
 creation locale inside that lifecycle. The invariant is instead established by
 the transactional backfill, assigned on every create, protected on update, and
 audited with the SQL in [database migrations](./database-migrations.md).
+
+Legacy/non-standard spellings such as `en_US` are canonicalized to `en-US` when
+an affected physical row is updated. Until all rows of that document are
+normalized, the source-locale audit may report multiple distinct spellings even
+though reads compare their canonical form safely. Repair all physical rows
+together rather than relying on incidental editor updates.
 
 Existing non-localized fields are synchronized by Strapi to already-existing
 translations. Creating a brand-new ČHMÚ Spring, however, creates only its Czech

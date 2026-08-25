@@ -31,10 +31,10 @@ follows [Semantic Versioning](https://semver.org/).
   which they were first created. Preferred ambiguous English siblings are
   configured as `en-US`, then `en-GB`, with all other same-language variants
   following deterministically.
-- Map/search isolate and log a Spring with corrupt source-locale metadata
-  instead of failing the entire aggregate response. Request-wide i18n
-  configuration errors remain visible, and locale parsing/fallback chains are
-  cached within each request.
+- All four read endpoints log corrupt source-locale metadata and continue with
+  the valid requested/parent/sibling/default chain instead of hiding readable
+  content or failing the request. Request-wide i18n configuration errors remain
+  visible, and locale parsing/fallback chains are cached within each request.
 - Source-locale lifecycle validation now reports editor changes as a Strapi
   validation error and tolerates legacy non-localized sync payloads carrying an
   unchanged null value without allowing them to erase an established source.

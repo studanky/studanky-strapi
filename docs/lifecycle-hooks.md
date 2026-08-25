@@ -20,8 +20,9 @@ already assigned source locale with a Strapi validation error (HTTP 400 in the
 Content Manager API). A stale non-localized sync carrying `source_locale: null`
 cannot erase an established value. If an imported legacy row is already null,
 an unrelated editor update is allowed without writing that null back; operations
-must repair it using the documented database audit. This metadata is the final
-document-level read fallback and is never exposed by the public API.
+must repair it using the documented database audit. Read endpoints log invalid
+source metadata and continue through their requested/default chain without the
+source step. This metadata is never exposed by the public API.
 
 The field cannot be schema-level `required` while it is derived here: Strapi
 Document Service validates required creation fields before the database
