@@ -27,6 +27,7 @@ const SEARCH_MAX_QUERY = 80;
 const SEARCH_DEFAULT_LIMIT = 10;
 const SEARCH_MAX_LIMIT = 50;
 const SEARCH_CANDIDATE_CAP = 200; // bounds the JS distance sort on broad queries
+const SOURCE_FALLBACK_LOG_SAMPLE_LIMIT = 10;
 const REPORT_UID = "api::report.report";
 const CONFIG_UID = "api::platform-config.platform-config";
 const CHMU_SOURCE = "chmu";
@@ -126,6 +127,32 @@ interface SpringSourceMetadata {
   locale: string | null;
 }
 
+type LocaleCanonicalizer = (locale: string) => string | null;
+
+function indexConfiguredLocales(
+  configured: string[],
+  canonicalize: LocaleCanonicalizer = canonicalizeLocaleTag,
+): Map<string, string> {
+  const lookup = new Map<string, string>();
+  for (const locale of configured) {
+    const canonical = canonicalize(locale);
+    if (!canonical) {
+      throw new Error(`Strapi i18n locale ${locale} is invalid`);
+    }
+    lookup.set(canonical, locale);
+  }
+  return lookup;
+}
+
+function findConfiguredLocale(
+  locale: string,
+  configuredByCanonical: ReadonlyMap<string, string>,
+  canonicalize: LocaleCanonicalizer = canonicalizeLocaleTag,
+): string | undefined {
+  const canonical = canonicalize(locale);
+  return canonical ? configuredByCanonical.get(canonical) : undefined;
+}
+
 async function getSpringSourceMetadata(
   strapi: Core.Strapi,
   documentId: string,
@@ -184,11 +211,11 @@ function resolveSpringReadLocales(params: {
     return baseAttempts;
   }
 
-  const canonicalSource = canonicalizeLocaleTag(source.locale);
-  const configuredSource = configured.find(
-    (locale) => canonicalizeLocaleTag(locale) === canonicalSource,
+  const configuredSource = findConfiguredLocale(
+    source.locale,
+    indexConfiguredLocales(configured),
   );
-  if (!canonicalSource || !configuredSource) {
+  if (!configuredSource) {
     strapi.log.error(
       `spring.${endpoint}: invalid source_locale for document ${documentId}: ${source.locale} is not configured in Strapi i18n; continuing without source fallback`,
     );
@@ -207,11 +234,17 @@ function logSourceFallbackIssues(
     return;
   }
 
-  const details = issues
+  const shown = issues.slice(0, SOURCE_FALLBACK_LOG_SAMPLE_LIMIT);
+  const details = shown
     .map(({ documentId, error }) => `${documentId} (${error.message})`)
     .join("; ");
+  const omitted = issues.length - shown.length;
+  const suffix =
+    omitted > 0
+      ? ` (+${omitted} more; see the source-locale audit query in database-migrations.md)`
+      : "";
   strapi.log.error(
-    `spring.${endpoint}: ${issues.length} document(s) without usable source_locale fallback; continuing with requested/default chain: ${details}`,
+    `spring.${endpoint}: ${issues.length} document(s) without usable source_locale fallback; continuing with requested/default chain: ${details}${suffix}`,
   );
 }
 
@@ -252,8 +285,9 @@ function selectLocalizedSpringRows<T extends LocalizedSpringRow>(params: {
     }
     return canonicalCache.get(value) ?? null;
   };
-  const configuredByCanonical = new Map(
-    configured.map((locale) => [canonicalizeCached(locale), locale]),
+  const configuredByCanonical = indexConfiguredLocales(
+    configured,
+    canonicalizeCached,
   );
   const attemptsBySource = new Map<string, string[]>();
 
@@ -285,7 +319,11 @@ function selectLocalizedSpringRows<T extends LocalizedSpringRow>(params: {
       }
 
       const sourceLocale = sourceLocales[0];
-      const configuredSource = configuredByCanonical.get(sourceLocale);
+      const configuredSource = findConfiguredLocale(
+        sourceLocale,
+        configuredByCanonical,
+        canonicalizeCached,
+      );
       if (!configuredSource) {
         throw new Error(
           `source_locale ${sourceLocale} is not configured in Strapi i18n`,
@@ -663,14 +701,14 @@ export default factories.createCoreService(SPRING_UID, ({ strapi }) => ({
    * missing values, notably the not-yet-sent photo).
    *
    * Locale fallback: a shared web link must not die because of language. We
-   * build an ordered attempt list with `resolveLocaleChain` — exact requested
-   * locale, its parents/same-language variants, default and source locale — and
-   * query each until one hits. So an unsupported/garbage locale from a share URL
-   * is never passed to the Document Service (behaviour never depends on how it
-   * reacts to an unknown locale), and a spring published only in the default
-   * locale is still served. A Spring missing/unpublished in every attempted
-   * locale yields null → the controller answers 404. The actually served locale
-   * is returned as `locale` so the web knows which language it got.
+   * build an ordered attempt list with `resolveSpringReadLocales` — exact
+   * requested locale, its parents/same-language variants, default and source
+   * locale — and query each until one hits. So an unsupported/garbage locale
+   * from a share URL is never passed to the Document Service (behaviour never
+   * depends on how it reacts to an unknown locale), and a spring published only
+   * in the default locale is still served. A Spring missing/unpublished in every
+   * attempted locale yields null → the controller answers 404. The actually
+   * served locale is returned as `locale` so the web knows which language it got.
    */
   async preview(documentId: string, locale?: string) {
     if (!documentId) {

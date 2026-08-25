@@ -181,6 +181,35 @@ describe("spring.map — document locale fallback", () => {
     );
   });
 
+  it("bounds aggregate source fallback diagnostics to ten document samples", async () => {
+    const invalidRows = Array.from({ length: 12 }, (_, index) => ({
+      documentId: `invalid-${String(index).padStart(2, "0")}`,
+      name: `Invalid ${index}`,
+      lat: 50 + index / 100,
+      lng: 14 + index / 100,
+      current_status: "unknown",
+      status_updated_at: null,
+      locale: "cs",
+      source_locale: null,
+    }));
+    const { service, log } = buildService({
+      findMany: async () => invalidRows,
+    });
+
+    const result = await service.findInBbox("13,49,15,51", "en");
+
+    expect(result).toHaveLength(12);
+    expect(log.error).toHaveBeenCalledTimes(1);
+    const message = String(log.error.mock.calls[0][0]);
+    expect(message).toContain("12 document(s)");
+    expect(message).toContain("invalid-09");
+    expect(message).not.toContain("invalid-10");
+    expect(message).toContain(
+      "+2 more; see the source-locale audit query in database-migrations.md",
+    );
+    expect(Buffer.byteLength(message, "utf8")).toBeLessThan(2_000);
+  });
+
   it("keeps an empty global i18n configuration as a visible error", async () => {
     const { service, findMany } = buildService({ configured: [] });
 

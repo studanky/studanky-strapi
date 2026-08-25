@@ -35,7 +35,6 @@ describe("resolveLocaleChain", () => {
       resolveLocaleChain({
         requested: "en-AU",
         defaultLocale: "cs",
-        sourceLocale: "cs",
         configured: ["cs", "en-US", "en-GB"],
         preferredVariants: { en: ["en-US", "en-GB"] },
       }),
@@ -110,28 +109,6 @@ describe("resolveLocaleChain", () => {
         configured: ["pl"],
       }),
     ).toEqual(["pl"]);
-  });
-
-  it("adds the document source locale after a distinct default", () => {
-    expect(
-      resolveLocaleChain({
-        requested: "fr-FR",
-        defaultLocale: "en",
-        sourceLocale: "cs",
-        configured: ["cs", "en"],
-      }),
-    ).toEqual(["en", "cs"]);
-  });
-
-  it("rejects a source locale which Strapi does not have configured", () => {
-    expect(() =>
-      resolveLocaleChain({
-        requested: "en",
-        defaultLocale: "en",
-        sourceLocale: "cs",
-        configured: ["en"],
-      }),
-    ).toThrow("source locale cs is not in the configured locale list");
   });
 
   it("never yields duplicate attempts (each locale queried at most once)", () => {

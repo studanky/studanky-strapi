@@ -33,8 +33,7 @@ function localeLanguage(value: string): string {
  *  1. exact requested Flutter language tag,
  *  2. less-specific requested variants (language+script, then language),
  *  3. configured sibling variants of the same language,
- *  4. the application's current default locale,
- *  5. the document's immutable source locale.
+ *  4. the application's current default locale.
  *
  * Only configured Strapi locale codes are ever returned. Configured spelling
  * is preserved for Document Service / Query Engine calls. A present document
@@ -43,17 +42,11 @@ function localeLanguage(value: string): string {
 export function resolveLocaleChain(params: {
   requested?: string | null;
   defaultLocale: string;
-  sourceLocale?: string | null;
   configured: string[];
   preferredVariants?: PreferredLocaleVariants;
 }): string[] {
-  const {
-    requested,
-    defaultLocale,
-    sourceLocale,
-    configured,
-    preferredVariants = {},
-  } = params;
+  const { requested, defaultLocale, configured, preferredVariants = {} } =
+    params;
 
   const configuredByCanonical = new Map<string, string>();
   for (const locale of configured) {
@@ -113,19 +106,6 @@ export function resolveLocaleChain(params: {
     );
   }
   chain.push(configuredDefault);
-
-  if (sourceLocale != null) {
-    const canonicalSource = canonicalizeLocaleTag(sourceLocale);
-    const configuredSource = canonicalSource
-      ? configuredByCanonical.get(canonicalSource)
-      : undefined;
-    if (!configuredSource) {
-      throw new Error(
-        `Spring source locale ${sourceLocale} is not in the configured locale list`,
-      );
-    }
-    chain.push(configuredSource);
-  }
 
   return [...new Set(chain)];
 }
