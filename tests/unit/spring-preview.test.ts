@@ -44,7 +44,7 @@ function buildService(opts: {
   }) => Promise<unknown>;
   defaultLocale?: string;
   configured?: string[];
-  sourceLocale?: string;
+  sourceLocale?: string | null;
 }) {
   const localesService = {
     getDefaultLocale: vi.fn(async () => opts.defaultLocale ?? "en"),
@@ -53,19 +53,26 @@ function buildService(opts: {
     ),
   };
   const findOne = vi.fn(opts.findOne);
+  const log = {
+    debug: vi.fn(),
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+  };
   const strapi = {
     documents: () => ({ findOne }),
     db: {
       query: () => ({
         findOne: async ({ where }: { where: { documentId: string } }) => ({
           documentId: where.documentId,
-          source_locale: opts.sourceLocale ?? "cs",
+          source_locale:
+            opts.sourceLocale === undefined ? "cs" : opts.sourceLocale,
         }),
       }),
     },
     config: { get: () => ({ en: ["en-US", "en-GB"] }) },
     plugin: () => ({ service: () => localesService }),
-    log: { debug() {}, info() {}, warn() {}, error() {} },
+    log,
   } as never;
 
   const service = springServiceFactory({ strapi }) as unknown as {
@@ -74,7 +81,7 @@ function buildService(opts: {
       locale?: string,
     ) => Promise<Record<string, unknown> | null>;
   };
-  return { service, findOne };
+  return { service, findOne, log };
 }
 
 describe("spring.preview — service contract", () => {
@@ -168,6 +175,39 @@ describe("spring.preview — service contract", () => {
     expect(findOne).toHaveBeenCalledTimes(1);
     expect(findOne.mock.calls[0][0].locale).toBe("en");
     expect(res?.locale).toBe("en");
+  });
+
+  it("logs a missing source and still serves preview from the default locale", async () => {
+    const { service, findOne, log } = buildService({
+      defaultLocale: "en",
+      configured: ["cs", "en"],
+      sourceLocale: null,
+      findOne: async ({ locale }) => (locale === "en" ? sampleRow() : null),
+    });
+
+    const res = await service.preview("doc1", "de");
+
+    expect(res?.locale).toBe("en");
+    expect(findOne).toHaveBeenCalledTimes(1);
+    expect(log.error).toHaveBeenCalledWith(
+      expect.stringContaining("has no source_locale"),
+    );
+  });
+
+  it("logs an unconfigured source and still serves preview from the default locale", async () => {
+    const { service, log } = buildService({
+      defaultLocale: "en",
+      configured: ["cs", "en"],
+      sourceLocale: "de",
+      findOne: async ({ locale }) => (locale === "en" ? sampleRow() : null),
+    });
+
+    const res = await service.preview("doc1", "fr");
+
+    expect(res?.locale).toBe("en");
+    expect(log.error).toHaveBeenCalledWith(
+      expect.stringContaining("invalid source_locale"),
+    );
   });
 
   it("returns null (→ 404) when the spring is absent in every attempted locale", async () => {

@@ -132,7 +132,11 @@ describe("spring.syncFromChmu localization", () => {
     const stats = await service.syncFromChmu();
 
     expect(publish).not.toHaveBeenCalled();
-    expect(stats.errors).toBe(1);
+    expect(stats).toMatchObject({
+      created: 0,
+      localized_created: 0,
+      errors: 1,
+    });
     expect(log.error).toHaveBeenCalledWith(
       expect.stringContaining("No documentId resolved for CHMU-1"),
     );

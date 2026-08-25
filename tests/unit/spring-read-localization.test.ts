@@ -30,7 +30,7 @@ function buildService(options: {
   configured?: string[];
   findMany?: (args: Record<string, unknown>) => Promise<unknown[]>;
   findOne?: (args: Record<string, unknown>) => Promise<unknown>;
-  sourceLocale?: string;
+  sourceLocale?: string | null;
 }) {
   const localesService = {
     getDefaultLocale: vi.fn(async () => options.defaultLocale ?? "cs"),
@@ -42,7 +42,8 @@ function buildService(options: {
   const findOne = vi.fn(options.findOne ?? (async () => null));
   const findSource = vi.fn(async ({ where }: Record<string, any>) => ({
     documentId: where.documentId,
-    source_locale: options.sourceLocale ?? "cs",
+    source_locale:
+      options.sourceLocale === undefined ? "cs" : options.sourceLocale,
   }));
   const log = {
     debug: vi.fn(),
@@ -129,7 +130,7 @@ describe("spring.map — document locale fallback", () => {
     });
   });
 
-  it("logs and skips a corrupt document without hiding healthy map rows", async () => {
+  it("logs a corrupt source and still serves the document through the base map chain", async () => {
     const { service, log } = buildService({
       findMany: async () => [
         {
@@ -155,9 +156,9 @@ describe("spring.map — document locale fallback", () => {
       ],
     });
 
-    await expect(service.findInBbox("13,49,15,51", "en")).resolves.toEqual([
-      expect.objectContaining({ documentId: "healthy" }),
-    ]);
+    const result = await service.findInBbox("13,49,15,51", "en");
+
+    expect(result.map((row) => row.documentId)).toEqual(["healthy", "corrupt"]);
     expect(log.error).toHaveBeenCalledWith(
       expect.stringContaining("skipping invalid document corrupt"),
     );
@@ -267,7 +268,7 @@ describe("spring.search — document locale fallback", () => {
     expect(result[0].distance_m).toEqual(expect.any(Number));
   });
 
-  it("logs and skips a search candidate whose source locale is no longer configured", async () => {
+  it("logs an unconfigured source and still serves the candidate through the base search chain", async () => {
     const { service, log } = buildService({
       configured: ["cs", "en"],
       findMany: async () => [
@@ -296,7 +297,10 @@ describe("spring.search — document locale fallback", () => {
 
     const result = await service.search({ q: "spring", locale: "en" });
 
-    expect(result.map((row) => row.documentId)).toEqual(["healthy"]);
+    expect(result.map((row) => row.documentId)).toEqual([
+      "healthy",
+      "removed-source",
+    ]);
     expect(log.error).toHaveBeenCalledWith(
       expect.stringContaining("skipping invalid document removed-source"),
     );
@@ -357,5 +361,43 @@ describe("spring.findOneWithLocaleFallback", () => {
 
     expect(findOne).toHaveBeenCalledTimes(1);
     expect(findOne.mock.calls[0][0].locale).toBe("cs");
+  });
+
+  it("logs a missing source and still serves detail from the default locale", async () => {
+    const czech = { documentId: "spring-1", locale: "cs" };
+    const { service, findOne, log } = buildService({
+      defaultLocale: "cs",
+      configured: ["cs", "en"],
+      sourceLocale: null,
+      findOne: async ({ locale }) => (locale === "cs" ? czech : null),
+    });
+
+    await expect(
+      service.findOneWithLocaleFallback("spring-1", { locale: "en" }),
+    ).resolves.toEqual(czech);
+    expect(findOne.mock.calls.map(([query]) => query.locale)).toEqual([
+      "en",
+      "cs",
+    ]);
+    expect(log.error).toHaveBeenCalledWith(
+      expect.stringContaining("has no source_locale"),
+    );
+  });
+
+  it("logs an unconfigured source and still serves detail from the default locale", async () => {
+    const czech = { documentId: "spring-1", locale: "cs" };
+    const { service, log } = buildService({
+      defaultLocale: "cs",
+      configured: ["cs", "en"],
+      sourceLocale: "de",
+      findOne: async ({ locale }) => (locale === "cs" ? czech : null),
+    });
+
+    await expect(
+      service.findOneWithLocaleFallback("spring-1", { locale: "en" }),
+    ).resolves.toEqual(czech);
+    expect(log.error).toHaveBeenCalledWith(
+      expect.stringContaining("invalid source_locale"),
+    );
   });
 });

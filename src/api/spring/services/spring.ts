@@ -116,10 +116,15 @@ function getPreferredLocaleVariants(
   return configured as PreferredLocaleVariants;
 }
 
-async function getSpringSourceLocale(
+interface SpringSourceMetadata {
+  documentExists: boolean;
+  locale: string | null;
+}
+
+async function getSpringSourceMetadata(
   strapi: Core.Strapi,
   documentId: string,
-): Promise<string | null> {
+): Promise<SpringSourceMetadata> {
   const row = (await strapi.db.query(SPRING_UID).findOne({
     where: { documentId },
     select: ["documentId", "source_locale"],
@@ -127,12 +132,68 @@ async function getSpringSourceLocale(
   })) as { documentId: string; source_locale?: string | null } | null;
 
   if (!row) {
-    return null;
+    return { documentExists: false, locale: null };
   }
-  if (!row.source_locale) {
-    throw new Error(`Spring ${documentId} has no source_locale`);
+  return { documentExists: true, locale: row.source_locale ?? null };
+}
+
+/**
+ * Resolves the usable read chain first, then appends source metadata only when
+ * valid. Source metadata improves fallback resilience but never gates an
+ * otherwise readable requested/default variant.
+ */
+function resolveSpringReadLocales(params: {
+  strapi: Core.Strapi;
+  endpoint: "detail" | "preview";
+  documentId: string;
+  requested?: string;
+  defaultLocale: string;
+  configured: string[];
+  preferredVariants: PreferredLocaleVariants;
+  source: SpringSourceMetadata;
+}): string[] {
+  const {
+    strapi,
+    endpoint,
+    documentId,
+    requested,
+    defaultLocale,
+    configured,
+    preferredVariants,
+    source,
+  } = params;
+  const baseAttempts = resolveLocaleChain({
+    requested,
+    defaultLocale,
+    configured,
+    preferredVariants,
+  });
+
+  if (!source.documentExists) {
+    return baseAttempts;
   }
-  return row.source_locale;
+  if (!source.locale) {
+    strapi.log.error(
+      `spring.${endpoint}: document ${documentId} has no source_locale; continuing without source fallback`,
+    );
+    return baseAttempts;
+  }
+
+  try {
+    return resolveLocaleChain({
+      requested,
+      defaultLocale,
+      sourceLocale: source.locale,
+      configured,
+      preferredVariants,
+    });
+  } catch (error) {
+    const cause = error instanceof Error ? error : new Error(String(error));
+    strapi.log.error(
+      `spring.${endpoint}: invalid source_locale for document ${documentId}: ${cause.message}; continuing without source fallback`,
+    );
+    return baseAttempts;
+  }
 }
 
 /**
@@ -190,6 +251,7 @@ function selectLocalizedSpringRows<T extends LocalizedSpringRow>(params: {
 
   const selected: Array<Omit<T, "source_locale">> = [];
   for (const [documentId, variants] of byDocument) {
+    let attempts = baseAttempts;
     try {
       const canonicalSources = variants.map((row) =>
         row.source_locale ? canonicalizeCached(row.source_locale) : null,
@@ -214,25 +276,27 @@ function selectLocalizedSpringRows<T extends LocalizedSpringRow>(params: {
         );
       }
 
-      let attempts = attemptsBySource.get(configuredSource);
-      if (!attempts) {
+      const cachedAttempts = attemptsBySource.get(configuredSource);
+      if (cachedAttempts) {
+        attempts = cachedAttempts;
+      } else {
         attempts = [...new Set([...baseAttempts, configuredSource])];
         attemptsBySource.set(configuredSource, attempts);
-      }
-
-      const variantsByLocale = new Map(
-        variants.map((row) => [canonicalizeCached(row.locale), row]),
-      );
-      const row = attempts
-        .map((locale) => variantsByLocale.get(canonicalizeCached(locale)))
-        .find((candidate): candidate is T => Boolean(candidate));
-      if (row) {
-        const { source_locale: _sourceLocale, ...publicRow } = row;
-        selected.push(publicRow as Omit<T, "source_locale">);
       }
     } catch (error) {
       const cause = error instanceof Error ? error : new Error(String(error));
       onInvalidDocument(documentId, cause);
+    }
+
+    const variantsByLocale = new Map(
+      variants.map((row) => [canonicalizeCached(row.locale), row]),
+    );
+    const row = attempts
+      .map((locale) => variantsByLocale.get(canonicalizeCached(locale)))
+      .find((candidate): candidate is T => Boolean(candidate));
+    if (row) {
+      const { source_locale: _sourceLocale, ...publicRow } = row;
+      selected.push(publicRow as Omit<T, "source_locale">);
     }
   }
   return selected;
@@ -489,17 +553,20 @@ export default factories.createCoreService(SPRING_UID, ({ strapi }) => ({
     const requestedLocale =
       typeof params.locale === "string" ? params.locale : undefined;
     const { locale: _locale, ...query } = params;
-    const [defaultLocale, configured, sourceLocale] = await Promise.all([
+    const [defaultLocale, configured, source] = await Promise.all([
       getDefaultLocale(strapi),
       getConfiguredLocales(strapi),
-      getSpringSourceLocale(strapi, documentId),
+      getSpringSourceMetadata(strapi, documentId),
     ]);
-    const attempts = resolveLocaleChain({
+    const attempts = resolveSpringReadLocales({
+      strapi,
+      endpoint: "detail",
+      documentId,
       requested: requestedLocale,
       defaultLocale,
-      sourceLocale,
       configured,
       preferredVariants: getPreferredLocaleVariants(strapi),
+      source,
     });
 
     for (const locale of attempts) {
@@ -598,17 +665,20 @@ export default factories.createCoreService(SPRING_UID, ({ strapi }) => ({
       return null;
     }
 
-    const [defaultLocale, configured, sourceLocale] = await Promise.all([
+    const [defaultLocale, configured, source] = await Promise.all([
       getDefaultLocale(strapi),
       getConfiguredLocales(strapi),
-      getSpringSourceLocale(strapi, documentId),
+      getSpringSourceMetadata(strapi, documentId),
     ]);
-    const attempts = resolveLocaleChain({
+    const attempts = resolveSpringReadLocales({
+      strapi,
+      endpoint: "preview",
+      documentId,
       requested: locale,
       defaultLocale,
-      sourceLocale,
       configured,
       preferredVariants: getPreferredLocaleVariants(strapi),
+      source,
     });
 
     const queryPreview = (loc: string) =>
@@ -753,7 +823,6 @@ export default factories.createCoreService(SPRING_UID, ({ strapi }) => ({
             locale: CHMU_SOURCE_LOCALE,
           });
           documentId = created.documentId;
-          stats.localized_created++;
         } else {
           if (existingDocument?.source_locale !== CHMU_SOURCE_LOCALE) {
             throw new Error(
@@ -792,6 +861,10 @@ export default factories.createCoreService(SPRING_UID, ({ strapi }) => ({
 
         if (!documentId) {
           throw new Error(`No documentId resolved for ${st.externalId}`);
+        }
+
+        if (stationWasCreated) {
+          stats.localized_created++;
         }
 
         await strapi.documents(SPRING_UID).publish({
