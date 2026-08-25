@@ -33,7 +33,10 @@ schema and must not be changed only on production.
   endpoints still use the valid requested/parent/sibling/default portion of the
   chain. Source metadata improves the final fallback; it is not a prerequisite
   for reading an otherwise available published variant. Map and search emit at
-  most one aggregate error per request, including all affected document IDs.
+  most one bounded aggregate error per request: total count, the first ten
+  affected document samples and the omitted count. Use the source-locale audit
+  query in [database migrations](./database-migrations.md#150-spring-source-locale-migration)
+  for the complete list.
 - Fallback is document-level. A present translation with an empty description
   is valid and does not trigger fallback.
 - Unsupported client locale codes are never sent to Strapi Document Service.
