@@ -5,12 +5,21 @@ import {
   resolveLocaleChain,
 } from "../../src/utils/locale";
 
-const configured = ["cs", "en", "en-US", "de"];
+const configuredByCanonical = indexConfiguredLocales([
+  "cs",
+  "en",
+  "en-US",
+  "de",
+]);
 
 describe("resolveLocaleChain", () => {
   it("tries the requested locale first, then the default, when both are configured and distinct", () => {
     expect(
-      resolveLocaleChain({ requested: "cs", defaultLocale: "en", configured }),
+      resolveLocaleChain({
+        requested: "cs",
+        defaultLocale: "en",
+        configuredByCanonical,
+      }),
     ).toEqual(["cs", "en"]);
   });
 
@@ -19,23 +28,27 @@ describe("resolveLocaleChain", () => {
       resolveLocaleChain({
         requested: "EN_us",
         defaultLocale: "cs",
-        configured,
+        configuredByCanonical,
       }),
     ).toEqual(["en-US", "en", "cs"]);
   });
 
   it("shares a prebuilt configured index between chain and direct lookups", () => {
-    const configuredByCanonical = indexConfiguredLocales(["cs", "en_US"]);
+    const regionalIndex = indexConfiguredLocales(["cs", "en_US"]);
 
     expect(
       resolveLocaleChain({
         requested: "EN-us",
         defaultLocale: "cs",
-        configured: configuredByCanonical,
+        configuredByCanonical: regionalIndex,
       }),
     ).toEqual(["en_US", "cs"]);
-    expect(findConfiguredLocale("en-US", configuredByCanonical)).toBe(
-      "en_US",
+    expect(findConfiguredLocale("en-US", regionalIndex)).toBe("en_US");
+  });
+
+  it("rejects invalid configured tags while building the shared index", () => {
+    expect(() => indexConfiguredLocales(["cs", "not-a-locale!"])).toThrow(
+      "Strapi i18n locale not-a-locale! is invalid",
     );
   });
 
@@ -44,7 +57,7 @@ describe("resolveLocaleChain", () => {
       resolveLocaleChain({
         requested: "en-GB",
         defaultLocale: "cs",
-        configured,
+        configuredByCanonical,
       }),
     ).toEqual(["en", "en-US", "cs"]);
   });
@@ -54,7 +67,11 @@ describe("resolveLocaleChain", () => {
       resolveLocaleChain({
         requested: "en-AU",
         defaultLocale: "cs",
-        configured: ["cs", "en-US", "en-GB"],
+        configuredByCanonical: indexConfiguredLocales([
+          "cs",
+          "en-US",
+          "en-GB",
+        ]),
         preferredVariants: { en: ["en-US", "en-GB"] },
       }),
     ).toEqual(["en-US", "en-GB", "cs"]);
@@ -65,7 +82,7 @@ describe("resolveLocaleChain", () => {
       resolveLocaleChain({
         requested: "en",
         defaultLocale: "cs",
-        configured: ["cs", "en-US"],
+        configuredByCanonical: indexConfiguredLocales(["cs", "en-US"]),
       }),
     ).toEqual(["en-US", "cs"]);
   });
@@ -75,14 +92,23 @@ describe("resolveLocaleChain", () => {
       resolveLocaleChain({
         requested: "sr-Latn-RS",
         defaultLocale: "cs",
-        configured: ["cs", "sr", "sr-Latn", "sr-Cyrl"],
+        configuredByCanonical: indexConfiguredLocales([
+          "cs",
+          "sr",
+          "sr-Latn",
+          "sr-Cyrl",
+        ]),
       }),
     ).toEqual(["sr-Latn", "sr", "sr-Cyrl", "cs"]);
   });
 
   it("deduplicates requested/default while retaining another same-language variant", () => {
     expect(
-      resolveLocaleChain({ requested: "en", defaultLocale: "en", configured }),
+      resolveLocaleChain({
+        requested: "en",
+        defaultLocale: "en",
+        configuredByCanonical,
+      }),
     ).toEqual(["en", "en-US"]);
   });
 
@@ -90,7 +116,11 @@ describe("resolveLocaleChain", () => {
     // 'fr' is not configured → never queried, avoids depending on how the
     // Document Service reacts to an unknown locale.
     expect(
-      resolveLocaleChain({ requested: "fr", defaultLocale: "en", configured }),
+      resolveLocaleChain({
+        requested: "fr",
+        defaultLocale: "en",
+        configuredByCanonical,
+      }),
     ).toEqual(["en"]);
   });
 
@@ -99,14 +129,22 @@ describe("resolveLocaleChain", () => {
       resolveLocaleChain({
         requested: undefined,
         defaultLocale: "en",
-        configured,
+        configuredByCanonical,
       }),
     ).toEqual(["en"]);
     expect(
-      resolveLocaleChain({ requested: null, defaultLocale: "en", configured }),
+      resolveLocaleChain({
+        requested: null,
+        defaultLocale: "en",
+        configuredByCanonical,
+      }),
     ).toEqual(["en"]);
     expect(
-      resolveLocaleChain({ requested: "", defaultLocale: "en", configured }),
+      resolveLocaleChain({
+        requested: "",
+        defaultLocale: "en",
+        configuredByCanonical,
+      }),
     ).toEqual(["en"]);
   });
 
@@ -115,7 +153,7 @@ describe("resolveLocaleChain", () => {
       resolveLocaleChain({
         requested: "cs",
         defaultLocale: "en",
-        configured: [],
+        configuredByCanonical: indexConfiguredLocales([]),
       }),
     ).toThrow("is not in the configured locale list");
   });
@@ -125,7 +163,7 @@ describe("resolveLocaleChain", () => {
       resolveLocaleChain({
         requested: "xx-ZZ",
         defaultLocale: "pl",
-        configured: ["pl"],
+        configuredByCanonical: indexConfiguredLocales(["pl"]),
       }),
     ).toEqual(["pl"]);
   });
@@ -134,7 +172,7 @@ describe("resolveLocaleChain", () => {
     const out = resolveLocaleChain({
       requested: "cs",
       defaultLocale: "cs",
-      configured,
+      configuredByCanonical,
     });
     expect(out).toEqual(["cs"]);
     expect(new Set(out).size).toBe(out.length);

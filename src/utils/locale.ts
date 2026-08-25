@@ -66,28 +66,26 @@ function localeLanguage(value: string): string {
  * Only configured Strapi locale codes are ever returned. Configured spelling
  * is preserved for Document Service / Query Engine calls. A present document
  * wins as a whole; callers must never continue merely because a field is null.
- * Callers that also resolve document metadata may pass a prebuilt index so the
- * same validated canonical mapping is reused for the entire request.
+ * Callers pass a prebuilt index so the same validated canonical mapping can be
+ * reused for the entire request and by adjacent metadata resolvers.
  */
 export function resolveLocaleChain(params: {
   requested?: string | null;
   defaultLocale: string;
-  configured: string[] | ConfiguredLocaleIndex;
+  configuredByCanonical: ConfiguredLocaleIndex;
   preferredVariants?: PreferredLocaleVariants;
 }): string[] {
-  const { requested, defaultLocale, configured, preferredVariants = {} } =
-    params;
-  const configuredByCanonical = Array.isArray(configured)
-    ? indexConfiguredLocales(configured)
-    : configured;
+  const {
+    requested,
+    defaultLocale,
+    configuredByCanonical,
+    preferredVariants = {},
+  } = params;
 
   const chain: string[] = [];
   const addCanonical = (canonical: string | null) => {
     if (!canonical) return;
-    const configuredLocale = findConfiguredLocale(
-      canonical,
-      configuredByCanonical,
-    );
+    const configuredLocale = configuredByCanonical.get(canonical);
     if (configuredLocale) chain.push(configuredLocale);
   };
 

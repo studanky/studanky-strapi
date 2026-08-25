@@ -174,7 +174,7 @@ function resolveSpringReadLocales(params: {
   const baseAttempts = resolveLocaleChain({
     requested,
     defaultLocale,
-    configured: configuredByCanonical,
+    configuredByCanonical,
     preferredVariants,
   });
 
@@ -264,7 +264,7 @@ function selectLocalizedSpringRows<T extends LocalizedSpringRow>(params: {
   const baseAttempts = resolveLocaleChain({
     requested,
     defaultLocale,
-    configured: configuredByCanonical,
+    configuredByCanonical,
     preferredVariants,
   });
   const attemptsBySource = new Map<string, string[]>();
