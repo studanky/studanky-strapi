@@ -676,14 +676,14 @@ export interface ApiSpringSpring extends Struct.CollectionTypeSchema {
       Schema.Attribute.Required &
       Schema.Attribute.SetPluginOptions<{
         i18n: {
-          localized: true;
+          localized: false;
         };
       }>;
     name_search: Schema.Attribute.String &
       Schema.Attribute.Private &
       Schema.Attribute.SetPluginOptions<{
         i18n: {
-          localized: true;
+          localized: false;
         };
       }>;
     owner: Schema.Attribute.Relation<'manyToOne', 'api::owner.owner'>;
@@ -701,6 +701,13 @@ export interface ApiSpringSpring extends Struct.CollectionTypeSchema {
         };
       }>;
     reports: Schema.Attribute.Relation<'oneToMany', 'api::report.report'>;
+    source_locale: Schema.Attribute.String &
+      Schema.Attribute.Private &
+      Schema.Attribute.SetPluginOptions<{
+        i18n: {
+          localized: false;
+        };
+      }>;
     status_updated_at: Schema.Attribute.DateTime &
       Schema.Attribute.SetPluginOptions<{
         i18n: {

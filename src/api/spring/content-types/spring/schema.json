@@ -19,7 +19,7 @@
       "type": "string",
       "pluginOptions": {
         "i18n": {
-          "localized": true
+          "localized": false
         }
       },
       "required": true
@@ -123,6 +123,15 @@
         }
       }
     },
+    "source_locale": {
+      "type": "string",
+      "private": true,
+      "pluginOptions": {
+        "i18n": {
+          "localized": false
+        }
+      }
+    },
     "external_id": {
       "type": "string",
       "pluginOptions": {
@@ -152,7 +161,7 @@
       "private": true,
       "pluginOptions": {
         "i18n": {
-          "localized": true
+          "localized": false
         }
       }
     }
