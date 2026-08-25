@@ -3,20 +3,30 @@
 This document describes custom lifecycle hooks in this Strapi application.
 
 > **Design note:** lifecycle hooks are used only for self-contained work on the
-> Spring itself (search-name synchronization and QR generation below).
+> Spring itself (source-locale/search-name invariants and QR generation below).
 > Cross-entity business logic — notably status denormalization — lives in
 > services, not hooks, so it is deterministic and testable. See
 > [Status Denormalization](./denormalization.md).
 
 ## Spring Content Type
 
+### Source Locale Invariant
+
+`beforeCreate` assigns private, non-localized `source_locale` once. ČHMÚ uses
+`cs`; a manually authored document uses its first creation locale (or the
+then-current i18n default when omitted). Creating publication/localization rows
+preserves the existing document value. `beforeUpdate` rejects changing an
+already assigned source locale. This metadata is the final document-level read
+fallback and is never exposed by the public API.
+
 ### Search Name Synchronization
 
 **Location:** `src/api/spring/content-types/spring/lifecycles.ts`
 
-When a Spring's localized `name` is created or updated, the private localized
-`name_search` field is updated to a lowercase, accent-free copy. This supports
-public search queries without diacritics, e.g. `vyprachtice` → `Výprachtice`.
+When a Spring's canonical, non-localized `name` is created or updated, the
+private non-localized `name_search` field is updated to a lowercase, accent-free
+copy. This supports public search queries without diacritics, e.g.
+`vyprachtice` → `Výprachtice`.
 
 The hook is guarded so it only writes `name_search` after the field exists in
 the content type.

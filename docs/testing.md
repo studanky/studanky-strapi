@@ -1,8 +1,9 @@
 # Automated Testing
 
-Unit tests run on [Vitest](https://vitest.dev). They cover the **pure logic** of
-the custom features — no running Strapi, DB, or network required, so they are
-fast and deterministic.
+Tests run on [Vitest](https://vitest.dev). They cover pure logic, thin Strapi
+contracts through mocks, and the portable migration against an in-memory SQLite
+database. No running Strapi or network is required, so they are fast and
+deterministic.
 
 ## Running
 
@@ -30,8 +31,14 @@ tests/
     fixed-window-rate-limit.test.ts
     concurrency.test.ts
     chmu-client.test.ts
+    canonical-spring-name-migration.test.ts
+    locale.test.ts
     newsletter-controller.test.ts
     newsletter.test.ts
+    spring-chmu-sync.test.ts
+    spring-controller.test.ts
+    spring-preview.test.ts
+    spring-read-localization.test.ts
     spring-scope.test.ts
 ```
 
@@ -46,8 +53,16 @@ Test files are named `*.test.ts` and live under `tests/`. The app `tsconfig.json
 | `fixed-window-rate-limit.test.ts` | `createFixedWindowRateLimiter` ([src/utils/fixed-window-rate-limit.ts](../src/utils/fixed-window-rate-limit.ts)) | per-key fixed windows, retry-after, max-key cap |
 | `concurrency.test.ts` | `mapWithConcurrency` ([src/utils/concurrency.ts](../src/utils/concurrency.ts)) | order preserved, limit never exceeded, empty input |
 | `chmu-client.test.ts` | `parseStations` / `parseLatestValue` / `recentMonths` ([chmu-client.ts](../src/api/spring/services/chmu-client.ts)) | spring filter, positional mapping, bad-coord skip, YD/L_S by name (not order), newest by `dt`, empty → null, month rollover |
+| `canonical-spring-name-migration.test.ts` | 1.5.0 Knex migration | SQLite draft/published fixtures, canonical copying, normalization, invariant preservation, missing-default rollback, fresh-DB no-op |
+| `spring-source-locale-migration.test.ts` | 1.5.0 source metadata migration | SQLite ČHMÚ/single/first-created inference, ambiguity rollback, fresh-DB no-op |
+| `locale.test.ts` | `resolveLocaleChain` | Flutter tag canonicalization, script/base/sibling/default/source ordering, unsupported locales and deduplication |
 | `newsletter-controller.test.ts` | newsletter subscribe controller ([controller](../src/api/newsletter-subscriber/controllers/newsletter-subscriber.ts)) | 413 payload guard, 429 + `Retry-After`, honeypot precedence, no core REST `{ data }` envelope |
 | `newsletter.test.ts` | newsletter subscribe helpers ([src/utils/newsletter.ts](../src/utils/newsletter.ts)) | email/source/language normalization, optional metadata handling, locale validation, consent validation, honeypot, idempotent write merge |
+| `spring-chmu-sync.test.ts` | `syncFromChmu` localization behavior | Czech-only writes even with English default, no translated description write, missing-Czech/config errors, compatible stats |
+| `spring-controller.test.ts` | Spring read controllers | map/search language-tag forwarding; detail validation, sanitization and envelope preserved |
+| `spring-preview.test.ts` | preview service | exact/base/sibling/default/source fallback, served locale and teaser boundary |
+| `spring-read-localization.test.ts` | map/search/full-detail services | per-document row selection, source fallback, distance/limit behavior, null-description semantics and query preservation |
+| `spring-source-locale-lifecycle.test.ts` | source metadata lifecycle | ČHMÚ/manual assignment, localization preservation and immutability |
 | `spring-scope.test.ts` | `resolveSpringScope` ([spring-scope.ts](../src/middlewares/document/spring-scope.ts)) | super-admin bypass, admin scoping, wrong uid/action, internal calls, **users-permissions not scoped (invariant #2)**, missing `roles[]` |
 
 ## Design: testable pure logic
@@ -68,8 +83,11 @@ exported pure helper next to the feature) + a thin Strapi-facing wrapper.
 These depend on a running Strapi + DB + network and are **not** unit-tested:
 
 - `refreshLatest` draft/published dual-write
-- `syncFromChmu` end-to-end (upsert → report → denormalize)
+- `syncFromChmu` live end-to-end (real source fetch → report → denormalize); its
+  locale-specific write contract is unit-tested with mocks
 - HTTP endpoints (`/springs/map`, `/springs/:documentId/reports`) and live scoping
+- PostgreSQL migration rehearsal (required against a temporary database before
+  production; SQLite behavior is automated)
 
 If/when integration coverage is wanted (e.g. alongside Phase 2 `report.submit`),
 add a separate suite that boots a test Strapi instance against a throwaway DB.

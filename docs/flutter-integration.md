@@ -1,4 +1,56 @@
-# Flutter Integration Guide: Report API Authentication
+# Flutter Integration Guide
+
+## Backend 1.5.0 read migration
+
+Spring names are canonical and descriptions remain localized. Send Flutter's
+full language tag to map, search and detail so the backend can negotiate an
+available whole-document variant:
+
+```dart
+final languageTag = Localizations.localeOf(context).toLanguageTag();
+
+final mapUri = Uri.parse('$baseUrl/api/springs/map').replace(
+  queryParameters: {
+    'bbox': '$minLng,$minLat,$maxLng,$maxLat',
+    'locale': languageTag, // e.g. en, en-US, en-AU, sr-Latn-RS
+  },
+);
+
+final searchUri = Uri.parse('$baseUrl/api/springs/search').replace(
+  queryParameters: {
+    'q': query,
+    if (lat != null) 'lat': '$lat',
+    if (lng != null) 'lng': '$lng',
+    'limit': '10',
+    'locale': languageTag,
+  },
+);
+
+final detailUri = Uri.parse('$baseUrl/api/springs/$documentId').replace(
+  queryParameters: {
+    'locale': languageTag,
+    'populate[photo]': 'true',
+  },
+);
+```
+
+The backend resolves exact tag → less-specific/base tag → configured variants
+of the same language → dynamic default → document source locale. For example,
+`en-AU` can use `en-US` when no `en-AU`/`en` content exists. Map/search select
+one complete published row per Spring; detail/preview return the first complete
+matching document. A present variant with `description: null` is valid and does
+not borrow another language's description.
+
+`locale` remains optional for older clients. When omitted, resolution starts at
+the dynamic default and then the source locale. Underscore input such as `en_US`
+is tolerated by the backend, but `toLanguageTag()` already emits the documented
+hyphenated form.
+
+No endpoint URL or JSON model changed, and report-history endpoints are
+unchanged. See the complete
+[1.5.0 client migration](./client-migrations/1.5.0-canonical-spring-name.md).
+
+## Report API authentication (Phase 2)
 
 > ⚠️ **Phase 2 — planned contract, not in the MVP.** `POST /api/reports` and its
 > HMAC policy are **not exposed in the current backend** (read-only ČHMÚ MVP).

@@ -15,32 +15,38 @@ signup lives in `src/api/newsletter-subscriber/routes/01-newsletter-subscribe.ts
 | POST | `/api/springs/sync-chmu` | `spring.syncChmu` | API token | manual ČHMÚ sync ([docs](./chmu-sync.md)) |
 | POST | `/api/newsletter/subscribe` | `newsletter-subscriber.subscribe` | public | idempotent newsletter signup |
 
-> Core `GET /api/springs/:documentId` (single spring) and `GET /api/platform-config`
-> remain the default core handlers — enable them for the Public role via admin RBAC.
+> `GET /api/platform-config` remains a default core handler. Spring `findOne`
+> overrides the core controller only to add locale fallback while preserving
+> core RBAC, validation, sanitization, query options, and response envelope.
+> Enable both actions for the Public role via admin RBAC.
 
-## `GET /api/springs/map?bbox=minLng,minLat,maxLng,maxLat`
+## `GET /api/springs/map?bbox=minLng,minLat,maxLng,maxLat&locale=en-AU`
 
-Minimal payload for rendering markers. The service (`findInBbox`) queries the
-**published**, **default-locale** rows and returns only map-safe fields —
-`name`, `lat`, `lng`, `current_status`, `status_updated_at` (+ `documentId`).
-**No report history, no private data.** Missing/invalid `bbox` → `400`.
+Minimal payload for rendering markers. The service (`findInBbox`) queries
+published localized rows, selects one whole variant per `documentId` with the
+shared fallback policy, and returns only map-safe fields — `name`, `lat`, `lng`,
+`current_status`, `status_updated_at` (+ `documentId`/served `locale`). **No
+report history or private data.** `locale` is optional; pass Flutter's
+`toLanguageTag()`. Missing/invalid `bbox` → `400`.
 
 ```jsonc
 // 200
 { "data": [ { "documentId": "…", "name": "Ostružná", "lat": 50.18, "lng": 17.05,
-              "current_status": "is_flowing", "status_updated_at": "2026-05-31T05:00:00.000Z" } ] }
+              "current_status": "is_flowing", "status_updated_at": "2026-05-31T05:00:00.000Z",
+              "locale": "en-US" } ] }
 ```
 
 The client computes the third "stale" state itself from `status_updated_at` +
 `platform-config.freshness_threshold_days` — the server only returns
 `is_flowing` / `is_not_flowing` / `unknown` + the timestamp.
 
-## `GET /api/springs/search?q=ostr&lat=50.1&lng=17.0&limit=10&locale=cs`
+## `GET /api/springs/search?q=ostr&lat=50.1&lng=17.0&limit=10&locale=en-AU`
 
 Name autocomplete for the map **search box**: the user types, picks a result,
 and the client flies the map to its `lat`/`lng`. The service (`search`) does a
-case-insensitive, accent-insensitive partial match on `name` (for example
-`ostruzna` matches `Ostružná`) and returns the **same map-safe fields as `/map`**
+case-insensitive, accent-insensitive partial match on the canonical,
+non-localized `name` (for example `ostruzna` matches `Ostružná`) and returns the
+**same map-safe fields as `/map`**
 (`name`, `lat`, `lng`, `current_status`, `status_updated_at`, `documentId`) —
 so a result is renderable as a marker immediately.
 
@@ -49,7 +55,11 @@ so a result is renderable as a marker immediately.
 | `q` | yes | — | search text; **min 2 chars** (else `400`) |
 | `lat`,`lng` | no | — | origin (user GPS or map centre); when both valid → nearest-first + `distance_m` |
 | `limit` | no | `10` | clamped to `50` |
-| `locale` | no | i18n default | which localized name to search/return |
+| `locale` | no | i18n default | preferred Flutter language tag |
+
+Search matches the non-localized canonical name across published locale rows,
+deduplicates them by `documentId`, and selects one whole row using the shared
+fallback. `locale` is active and optional; it is no longer ignored/deprecated.
 
 With a valid `lat`/`lng` origin results are ordered **nearest-first** and each
 carries a rounded `distance_m` (metres, haversine); without it they are
@@ -60,7 +70,7 @@ distance sort.
 // 200 — with origin (nearest-first, includes distance_m)
 { "data": [ { "documentId": "…", "name": "Ostružná", "lat": 50.18, "lng": 17.05,
               "current_status": "is_flowing", "status_updated_at": "2026-05-31T05:00:00.000Z",
-              "distance_m": 2310 } ] }
+              "locale": "en-US", "distance_m": 2310 } ] }
 ```
 
 As with `/map`, the client computes the "stale" state itself from
@@ -69,6 +79,19 @@ As with `/map`, the client computes the "stale" state itself from
 `source_type` is intentionally not returned by `/map` or `/search`; those
 endpoints expose only Spring-level marker data. Load report history when the UI
 needs the source of the latest observation.
+
+## `GET /api/springs/:documentId?locale=en-US`
+
+Full detail keeps Strapi's standard `{ data, meta }` envelope and the existing
+`fields`, `populate`, and `status` query behavior. It resolves the first existing
+whole-document variant in this order: exact configured locale (`en-US`),
+configured parents/base language (`en`), configured same-language variants,
+the current default locale, then the document source locale. Unsupported codes
+are never queried. `data.locale` reports the locale actually served.
+
+Fallback is not field-level. If the requested variant exists with
+`description: null`, that variant is returned and the server does not borrow a
+description from another language.
 
 ## `GET /api/springs/:documentId/reports?page=1&pageSize=20`
 
@@ -106,15 +129,15 @@ client concern, as on `/map` and `/search`).
 
 | Param | Required | Default | Notes |
 |---|---|---|---|
-| `locale` | no | i18n default | which localized `name` / `description` to return |
+| `locale` | no | i18n default | preferred language for localized `description` |
 
 **Locale fallback (share links must not die on language).** Reads the
-**published** row in the requested locale, but if that misses — an unsupported
-locale, or a spring **not yet published in that language** — it falls back to the
-**default locale** rather than 404-ing. A `404` means the spring is
-missing/unpublished in the default locale too. The response echoes the
-**actually served** `locale` so the web knows which language it got (may differ
-from the requested one after a fallback).
+first **published** whole-document variant in the same order as full detail:
+exact configured tag, configured parents/base and same-language variants, then
+the dynamic default and document source locale. Unsupported codes are never
+queried. A `404` means the Spring is missing or
+unpublished in every candidate locale. The response echoes the **actually
+served** `locale`. A present variant with `description: null` does not fall back.
 
 Field optionality mirrors the Spring schema: `name`, `lat`, `lng`,
 `current_status` and `locale` are **required** (always present);

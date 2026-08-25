@@ -11,6 +11,58 @@ a migration file.
 **Compatibility migration:** `database/migrations/2026.05.31T00.00.00.spring-report-indexes.js`
 is kept as a safe no-op for migration-history stability.
 
+## 1.5.0 canonical Spring name migration
+
+`database/migrations/2026.08.24T00.00.00.canonical-spring-name.js` prepares
+existing data before `name` and `name_search` become non-localized. Strapi runs
+the migration once, transactionally, before content-type schema sync.
+
+The migration is intentionally DML-only and uses portable Knex APIs for both
+development SQLite and production PostgreSQL. On a fresh database where the
+`springs` table does not yet exist, it exits safely. On an existing database it:
+
+1. validates all required Spring columns;
+2. reads `plugin_i18n_default_locale` from `strapi_core_store_settings` (there is
+   no hardcoded locale);
+3. groups rows by `document_id` and separately by draft/published state;
+4. requires exactly one default-locale row in every group;
+5. copies that row's canonical `name` to every existing localization and
+   rebuilds `name_search` with the application's normalization algorithm.
+
+It does not change row counts, `document_id`, locale, publication state,
+timestamps, or relations. Missing/ambiguous default variants fail the migration
+and roll back the transaction instead of guessing a canonical source.
+
+The automated SQLite fixture test is
+`tests/unit/canonical-spring-name-migration.test.ts`. Before production, rehearse
+the same migration against a temporary PostgreSQL database and an anonymized
+snapshot/count audit.
+
+## 1.5.0 Spring source-locale migration
+
+`database/migrations/2026.08.25T00.00.00.spring-source-locale.js` adds private,
+non-localized `source_locale` document metadata. Because migrations run before
+schema sync, it creates the column itself on an existing `springs` table; a
+fresh database remains a safe no-op and schema sync creates the field.
+
+For every `document_id`, the portable Knex migration:
+
+1. preserves an existing single consistent source value;
+2. assigns `cs` to ČHMÚ documents and requires their Czech row;
+3. uses the only locale when a document has one;
+4. otherwise uses a uniquely earliest-created locale;
+5. fails and rolls back on conflicts, timestamp ambiguity, or invalid rows.
+
+The selected value is copied to all draft/published physical rows of the
+document. Row counts, content, locale, publication state, timestamps and
+relations do not change. Automated SQLite coverage lives in
+`tests/unit/spring-source-locale-migration.test.ts`; rehearse both 1.5.0
+migrations in filename order on PostgreSQL before production.
+
+Strapi does not support `down()` migrations. Back up SQLite/PostgreSQL before
+deployment; rollback is a database restore plus the previous application
+version. See the [localization deployment runbook](./localization.md#backend-150-deployment).
+
 | Table | Index | Type | Purpose |
 |---|---|---|---|
 | `springs` | `(external_source, external_id)` | index | fast ČHMÚ pairing lookup |

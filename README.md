@@ -7,6 +7,7 @@ Built with [Strapi v5](https://strapi.io) and TypeScript.
 ## ✨ Features
 
 - **Source-neutral canonical model** — every data source is an adapter mapping into one model
+- **Canonical Spring names + localized descriptions** — document-level locale fallback for map, search, detail and preview
 - **ČHMÚ sync** — nightly cron + manual endpoint imports spring discharge data
 - **Denormalized map status** — cached current status for a cheap map endpoint
 - **Public read API** — `/springs/map` (bbox) and `/springs/:documentId/reports`
@@ -65,6 +66,8 @@ Custom backend logic is documented in [`docs/`](./docs/):
 | Document | Description |
 |----------|-------------|
 | [API Reference](./docs/api-reference.md) | **Mobile client contract** — every endpoint the app consumes (map, detail, history, config) |
+| [Client migration 1.5.0](./docs/client-migrations/1.5.0-canonical-spring-name.md) | Flutter language-tag and document fallback changes for released clients |
+| [Localization](./docs/localization.md) | Canonical fields, locale fallback, Admin UI and default-locale runbooks |
 | [ČHMÚ Sync](./docs/chmu-sync.md) | Source adapter, sync service, cron, manual endpoint |
 | [Public API](./docs/public-api.md) | Custom endpoints: map (bbox) + report history |
 | [Denormalization](./docs/denormalization.md) | `refreshLatest`, cached status, flow scale |
@@ -76,6 +79,7 @@ Custom backend logic is documented in [`docs/`](./docs/):
 | [Flutter Integration](./docs/flutter-integration.md) | Client submit contract (Phase 2, planned) |
 | [Roadmap](./docs/roadmap.md) | Next steps & Phase 2 / 3 plan |
 | [Testing](./docs/testing.md) | Running & writing the automated unit tests |
+| [Changelog](./CHANGELOG.md) | Versioned backend changes and migration notes |
 | [Product spec](./docs/studanky-specifikace.md) · [Backend design](./docs/studanky-strapi-navrh.md) | Source-of-truth design docs |
 
 ## 🔐 Environment Variables

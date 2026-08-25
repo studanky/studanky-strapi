@@ -38,6 +38,7 @@ Komponenty: `shared.geo-point` (latitude, longitude) a `config.flow-range` (scal
 | `longitude` | decimal, required, **indexováno** | |
 | `externalSource` | enum: `chmu` \| `manual` | původ; pro budoucí další zdroje |
 | `externalId` | string, **index (externalSource+externalId unikátní)** | klíč pro párování při ČHMÚ syncu — **ČHMÚ `objID`** (např. `0-203-1-PB0013`) |
+| `sourceLocale` (`source_locale`) | private string, nelokalizované | neměnný původní jazyk dokumentu; ČHMÚ vždy `cs` |
 | `owner` | relation manyToOne → `owner`, nullable | organizační metadata (kdo zodpovídá); **není** přístupový mechanismus |
 | `managers` | relation **manyWay → `admin::user`** | **řízení přístupu** — admini, kteří smí studánku spravovat v panelu (viz 2.4) |
 | `lastStatus` | enum: `flowing` \| `not_flowing` \| `unknown` | **denormalizace** z posledního reportu |
@@ -46,6 +47,12 @@ Komponenty: `shared.geo-point` (latitude, longitude) a `config.flow-range` (scal
 | `lastReportAt` | datetime, **indexováno** | čas posledního měření → aplikace z něj počítá čerstvost |
 
 > Souřadnice studánky jsou záměrně **top-level decimal pole**, ne komponenta — mapový dotaz tak filtruje a indexuje přímo nad sloupci (`$gte`/`$lte`) bez joinu. Komponentu `geo-point` použijeme jen pro GPS zachycené u reportu.
+
+Od backendu 1.5.0 je `name` kanonické nelokalizované pole a `description` je
+lokalizovaný obsah. Map, search, detail a preview přijímají volitelné Flutter
+`Locale.toLanguageTag()` a vybírají vždy celý dokument v pořadí exact/parent →
+stejný jazyk → globální default → `source_locale`. Pole se nikdy nemíchají mezi
+lokalizacemi. Kolekční map/search výstupy jsou deduplikované podle `documentId`.
 
 QR kód nese **`documentId` + HMAC podpis** (viz sekce 6). Žádné extra pole není nutné — `documentId` je v v5 stabilní identifikátor.
 
@@ -376,7 +383,7 @@ config/
 
 ## 9. Co je v MVP a co později
 
-- **MVP:** Spring + Report + Platform Config content-types; ČHMÚ sync (cron + service); endpointy `map`, `findOne`, `reports`, `platform-config`; denormalizace `lastStatus/lastReportAt`; tři stavy ikony (čerstvost). Žádné submit/auth/QR/GPS.
+- **MVP:** Spring + Report + Platform Config content-types; ČHMÚ sync (cron + service); endpointy `map`, `search`, `findOne`, `preview`, `reports`, `platform-config`; document-level locale fallback; denormalizace `lastStatus/lastReportAt`; tři stavy ikony (čerstvost). Žádné submit/auth/QR/GPS.
 - **Fáze 2:** `report.submit` (offline-first, idempotence), QR HMAC, stopky → l/s → škála. (Owner scoping `managers` + middleware lze nasadit už v MVP, je nezávislý na sběru dat.)
 - **Fáze 3:** přihlášení, `trustScore`, geofence, `flag`, odměňování.
 
