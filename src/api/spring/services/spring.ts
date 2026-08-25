@@ -30,6 +30,9 @@ const SEARCH_CANDIDATE_CAP = 200; // bounds the JS distance sort on broad querie
 const REPORT_UID = "api::report.report";
 const CONFIG_UID = "api::platform-config.platform-config";
 const CHMU_SOURCE = "chmu";
+// ČHMÚ station metadata is Czech source content. This is deliberately
+// independent of Strapi's mutable global default locale.
+const CHMU_SOURCE_LOCALE = "cs";
 
 type SpringStatus = "is_flowing" | "is_not_flowing" | "unknown";
 
@@ -609,9 +612,9 @@ export default factories.createCoreService(SPRING_UID, ({ strapi }) => ({
   },
 
   /**
-   * ČHMÚ sync — upserts spring stations in all configured locales and appends
-   * a fresh discharge report when ČHMÚ has newer data, then denormalizes via
-   * refreshLatest.
+   * ČHMÚ sync — upserts canonical station metadata in the Czech source locale
+   * only and appends a fresh discharge report when ČHMÚ has newer data, then
+   * denormalizes via refreshLatest.
    *
    * Source-neutral: the ČHMÚ adapter (`chmu-client`) yields neutral DTOs; this
    * method maps them onto the canonical model (external_source = 'chmu'). Each
@@ -619,12 +622,24 @@ export default factories.createCoreService(SPRING_UID, ({ strapi }) => ({
    * value downloads are concurrency-limited (~hundreds of files / night).
    */
   async syncFromChmu() {
-    const locales = await getConfiguredLocales(strapi);
+    const [defaultLocale, locales] = await Promise.all([
+      getDefaultLocale(strapi),
+      getConfiguredLocales(strapi),
+    ]);
+
+    if (!locales.includes(CHMU_SOURCE_LOCALE)) {
+      throw new Error(
+        `ČHMÚ sync requires configured source locale ${CHMU_SOURCE_LOCALE}`,
+      );
+    }
+
     const stations = await listSpringStations();
 
     const stats = {
       stations: stations.length,
       locales,
+      default_locale: defaultLocale,
+      sync_locale: CHMU_SOURCE_LOCALE,
       created: 0,
       updated: 0,
       localized_created: 0,
@@ -635,8 +650,9 @@ export default factories.createCoreService(SPRING_UID, ({ strapi }) => ({
       errors: 0,
     };
 
-    // Phase A — upsert station metadata in every configured locale
-    // (sequential; SQLite-friendly writes).
+    // Phase A — upsert canonical station metadata in Czech only (sequential;
+    // SQLite-friendly writes). Existing translations
+    // are never created or published by the source import.
     const targets: Array<{
       documentId: string;
       externalId: string;
@@ -651,60 +667,72 @@ export default factories.createCoreService(SPRING_UID, ({ strapi }) => ({
             external_id: st.externalId,
             publishedAt: null,
           },
-          select: ["documentId", "status_updated_at"],
+          select: ["documentId", "status_updated_at", "source_locale"],
           orderBy: { locale: "asc" },
-        })) as { documentId: string; status_updated_at: string | null } | null;
+        })) as {
+          documentId: string;
+          status_updated_at: string | null;
+          source_locale: string | null;
+        } | null;
 
         let documentId = existingDocument?.documentId ?? null;
         const stationWasCreated = !documentId;
 
-        for (const locale of locales) {
-          const existingLocale = documentId
-            ? ((await strapi.db.query(SPRING_UID).findOne({
-                where: {
-                  documentId,
-                  locale,
-                  publishedAt: null,
-                },
-                select: ["id"],
-              })) as { id: number } | null)
-            : null;
+        if (!documentId) {
+          const created = await strapi.documents(SPRING_UID).create({
+            data: springDataWithSearchName(strapi, {
+              name: st.name,
+              lat: st.lat,
+              lng: st.lng,
+              external_source: CHMU_SOURCE,
+              external_id: st.externalId,
+              source_locale: CHMU_SOURCE_LOCALE,
+              current_status: "unknown",
+            }),
+            locale: CHMU_SOURCE_LOCALE,
+          });
+          documentId = created.documentId;
+          stats.localized_created++;
+        } else {
+          if (existingDocument?.source_locale !== CHMU_SOURCE_LOCALE) {
+            throw new Error(
+              `Spring ${documentId} has source_locale ${existingDocument?.source_locale ?? "null"}; expected ${CHMU_SOURCE_LOCALE} for ČHMÚ`,
+            );
+          }
 
-          if (!documentId) {
-            const created = await strapi.documents(SPRING_UID).create({
-              data: springDataWithSearchName(strapi, {
-                name: st.name,
-                lat: st.lat,
-                lng: st.lng,
-                external_source: CHMU_SOURCE,
-                external_id: st.externalId,
-                current_status: "unknown",
-              }),
-              locale,
-            });
-            documentId = created.documentId;
-          } else {
-            await strapi.documents(SPRING_UID).update({
+          const existingCzech = (await strapi.db.query(SPRING_UID).findOne({
+            where: {
               documentId,
-              data: springDataWithSearchName(strapi, {
-                name: st.name,
-                lat: st.lat,
-                lng: st.lng,
-                external_source: CHMU_SOURCE,
-                external_id: st.externalId,
-              }),
-              locale,
-            });
+              locale: CHMU_SOURCE_LOCALE,
+              publishedAt: null,
+            },
+            select: ["id"],
+          })) as { id: number } | null;
+
+          if (!existingCzech) {
+            throw new Error(
+              `Spring ${documentId} has no draft in ČHMÚ source locale ${CHMU_SOURCE_LOCALE}`,
+            );
           }
 
-          await strapi.documents(SPRING_UID).publish({ documentId, locale });
-
-          if (existingLocale) {
-            stats.localized_updated++;
-          } else {
-            stats.localized_created++;
-          }
+          await strapi.documents(SPRING_UID).update({
+            documentId,
+            data: springDataWithSearchName(strapi, {
+              name: st.name,
+              lat: st.lat,
+              lng: st.lng,
+              external_source: CHMU_SOURCE,
+              external_id: st.externalId,
+            }),
+            locale: CHMU_SOURCE_LOCALE,
+          });
+          stats.localized_updated++;
         }
+
+        await strapi.documents(SPRING_UID).publish({
+          documentId,
+          locale: CHMU_SOURCE_LOCALE,
+        });
 
         if (!documentId) {
           throw new Error(`No documentId resolved for ${st.externalId}`);
@@ -724,7 +752,7 @@ export default factories.createCoreService(SPRING_UID, ({ strapi }) => ({
       } catch (err) {
         stats.errors++;
         strapi.log.error(
-          `chmuSync: upsert failed for ${st.externalId}: ${(err as Error).message}`
+          `chmuSync: upsert failed for ${st.externalId}: ${(err as Error).message}`,
         );
       }
     }
@@ -748,7 +776,7 @@ export default factories.createCoreService(SPRING_UID, ({ strapi }) => ({
       } catch (err) {
         stats.errors++;
         strapi.log.warn(
-          `chmuSync: value fetch failed for ${t.externalId}: ${(err as Error).message}`
+          `chmuSync: value fetch failed for ${t.externalId}: ${(err as Error).message}`,
         );
         return { t, value: null };
       }
@@ -791,7 +819,7 @@ export default factories.createCoreService(SPRING_UID, ({ strapi }) => ({
       } catch (err) {
         stats.errors++;
         strapi.log.error(
-          `chmuSync: report failed for ${t.externalId}: ${(err as Error).message}`
+          `chmuSync: report failed for ${t.externalId}: ${(err as Error).message}`,
         );
       }
     }
