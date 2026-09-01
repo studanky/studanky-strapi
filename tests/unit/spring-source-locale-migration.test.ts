@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import knexFactory, { type Knex } from "knex";
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
-const migration = require("../../database/migrations/2026.08.25T00.00.00.spring-source-locale.js");
+const migration = require("../../database/migrations/2026.08.24T00.00.00.spring-source-locale.js");
 
 const databases: Knex[] = [];
 

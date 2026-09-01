@@ -4,7 +4,11 @@ import * as path from "path";
 import * as os from "os";
 import { errors } from "@strapi/utils";
 import { normalizeSearchText } from "../../../../utils/search";
-import { canonicalizeLocaleTag } from "../../../../utils/locale";
+import {
+  canonicalizeLocaleTag,
+  indexConfiguredLocales,
+  type ConfiguredLocaleIndex,
+} from "../../../../utils/locale";
 
 const SPRING_UID = "api::spring.spring";
 const CHMU_SOURCE_LOCALE = "cs";
@@ -19,13 +23,36 @@ const syncNameSearch = (data: Record<string, unknown>) => {
   }
 };
 
-const canonicalSourceLocale = (value: unknown): string => {
+const getConfiguredLocaleIndex = async (): Promise<ConfiguredLocaleIndex> => {
+  const locales = (await strapi
+    .plugin("i18n")
+    .service("locales")
+    .find()) as Array<{ code?: unknown }>;
+  const codes = locales
+    .map(({ code }) => (typeof code === "string" ? code : ""))
+    .filter(Boolean);
+  if (codes.length === 0) {
+    throw new Error("Strapi i18n has no configured locales");
+  }
+  return indexConfiguredLocales(codes);
+};
+
+const canonicalConfiguredLocale = (
+  value: unknown,
+  configuredByCanonical: ConfiguredLocaleIndex,
+  field = "source_locale",
+): string => {
   const canonical = canonicalizeLocaleTag(
     typeof value === "string" ? value : undefined,
   );
   if (!canonical) {
     throw new errors.ValidationError(
-      "Spring source_locale must be a valid locale code",
+      `Spring ${field} must be a valid locale code`,
+    );
+  }
+  if (!configuredByCanonical.has(canonical)) {
+    throw new errors.ValidationError(
+      `Spring ${field} must be configured in Strapi i18n`,
     );
   }
   return canonical;
@@ -38,28 +65,42 @@ const canonicalSourceLocale = (value: unknown): string => {
  * which it was first created (or the then-current Strapi default).
  */
 const ensureSourceLocaleOnCreate = async (data: Record<string, unknown>) => {
-  if (typeof data.source_locale === "string" && data.source_locale.trim()) {
-    data.source_locale = canonicalSourceLocale(data.source_locale);
-    return;
-  }
+  const configuredByCanonical = await getConfiguredLocaleIndex();
 
   const documentId =
     typeof data.documentId === "string" ? data.documentId : undefined;
   if (documentId) {
-    const existing = (await strapi.db.query(SPRING_UID).findOne({
+    const existingRows = (await strapi.db.query(SPRING_UID).findMany({
       where: { documentId },
       select: ["source_locale"],
       orderBy: { id: "asc" },
-    })) as { source_locale?: string | null } | null;
-    if (existing?.source_locale) {
-      data.source_locale = canonicalSourceLocale(existing.source_locale);
+    })) as Array<{ source_locale?: string | null }>;
+    if (existingRows.length > 0) {
+      const sources = existingRows.map((row) =>
+        canonicalConfiguredLocale(row.source_locale, configuredByCanonical),
+      );
+      const distinctSources = [...new Set(sources)];
+      if (distinctSources.length !== 1) {
+        throw new errors.ValidationError(
+          "Spring has conflicting source_locale values across its physical rows",
+        );
+      }
+
+      const persisted = distinctSources[0];
+      if (typeof data.source_locale === "string" && data.source_locale.trim()) {
+        const requested = canonicalConfiguredLocale(
+          data.source_locale,
+          configuredByCanonical,
+        );
+        if (requested !== persisted) {
+          throw new errors.ValidationError(
+            "Spring source_locale is immutable across document localizations",
+          );
+        }
+      }
+      data.source_locale = persisted;
       return;
     }
-  }
-
-  if (data.external_source === "chmu") {
-    data.source_locale = CHMU_SOURCE_LOCALE;
-    return;
   }
 
   const creationLocale =
@@ -69,7 +110,30 @@ const ensureSourceLocaleOnCreate = async (data: Record<string, unknown>) => {
   if (!creationLocale) {
     throw new Error("Strapi i18n default locale is not configured");
   }
-  data.source_locale = canonicalSourceLocale(creationLocale);
+  const canonicalCreationLocale = canonicalConfiguredLocale(
+    creationLocale,
+    configuredByCanonical,
+    "creation locale",
+  );
+  const requestedSource =
+    typeof data.source_locale === "string" && data.source_locale.trim()
+      ? canonicalConfiguredLocale(data.source_locale, configuredByCanonical)
+      : canonicalCreationLocale;
+
+  if (requestedSource !== canonicalCreationLocale) {
+    throw new errors.ValidationError(
+      "A new Spring source_locale must equal its creation locale",
+    );
+  }
+  if (
+    data.external_source === "chmu" &&
+    canonicalCreationLocale !== CHMU_SOURCE_LOCALE
+  ) {
+    throw new errors.ValidationError(
+      `ČHMÚ Springs must be created in locale ${CHMU_SOURCE_LOCALE}`,
+    );
+  }
+  data.source_locale = requestedSource;
 };
 
 const preventSourceLocaleChange = async (event: {
@@ -82,6 +146,8 @@ const preventSourceLocaleChange = async (event: {
   if (!Object.prototype.hasOwnProperty.call(data, "source_locale")) {
     return;
   }
+
+  const configuredByCanonical = await getConfiguredLocaleIndex();
 
   const existing = where
     ? ((await strapi.db.query(SPRING_UID).findOne({
@@ -103,11 +169,17 @@ const preventSourceLocaleChange = async (event: {
       delete data.source_locale;
       return;
     }
-    data.source_locale = canonicalSourceLocale(data.source_locale);
+    data.source_locale = canonicalConfiguredLocale(
+      data.source_locale,
+      configuredByCanonical,
+    );
     return;
   }
 
-  const persisted = canonicalSourceLocale(existing.source_locale);
+  const persisted = canonicalConfiguredLocale(
+    existing.source_locale,
+    configuredByCanonical,
+  );
   if (
     data.source_locale == null ||
     (typeof data.source_locale === "string" && !data.source_locale.trim())
@@ -117,7 +189,10 @@ const preventSourceLocaleChange = async (event: {
     return;
   }
 
-  const requested = canonicalSourceLocale(data.source_locale);
+  const requested = canonicalConfiguredLocale(
+    data.source_locale,
+    configuredByCanonical,
+  );
   if (persisted !== requested) {
     throw new errors.ValidationError(
       "Spring source_locale is immutable after creation",

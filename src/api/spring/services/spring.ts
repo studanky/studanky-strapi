@@ -773,9 +773,11 @@ export default factories.createCoreService(SPRING_UID, ({ strapi }) => ({
   },
 
   /**
-   * ČHMÚ sync — upserts canonical station metadata in the Czech source locale
-   * only and appends a fresh discharge report when ČHMÚ has newer data, then
-   * denormalizes via refreshLatest.
+   * ČHMÚ sync — upserts canonical station metadata through the Czech source
+   * locale and appends a fresh discharge report when ČHMÚ has newer data, then
+   * denormalizes via refreshLatest. Existing translations keep their localized
+   * content and publication state, while the explicit scalar allowlist below is
+   * synchronized to every physical row of the document.
    *
    * Source-neutral: the ČHMÚ adapter (`chmu-client`) yields neutral DTOs; this
    * method maps them onto the canonical model (external_source = 'chmu'). Each
@@ -811,9 +813,10 @@ export default factories.createCoreService(SPRING_UID, ({ strapi }) => ({
       errors: 0,
     };
 
-    // Phase A — upsert canonical station metadata in Czech only (sequential;
-    // SQLite-friendly writes). Existing translations
-    // are never created or published by the source import.
+    // Phase A — upsert canonical station metadata through Czech (sequential;
+    // SQLite-friendly writes). Existing translations are never created or
+    // published by the source import. Their shared source-owned scalar fields
+    // are synchronized explicitly after publishing the Czech row.
     const targets: Array<{
       documentId: string;
       externalId: string;
@@ -822,6 +825,17 @@ export default factories.createCoreService(SPRING_UID, ({ strapi }) => ({
 
     for (const st of stations) {
       try {
+        // Keep this allowlist deliberately narrow. In particular it must never
+        // contain localized editorial content (`description`), publication
+        // metadata, relations/media, status fields or immutable source_locale.
+        const canonicalStationData = springDataWithSearchName(strapi, {
+          name: st.name,
+          lat: st.lat,
+          lng: st.lng,
+          external_source: CHMU_SOURCE,
+          external_id: st.externalId,
+        });
+
         const existingDocument = (await strapi.db.query(SPRING_UID).findOne({
           where: {
             external_source: CHMU_SOURCE,
@@ -841,15 +855,11 @@ export default factories.createCoreService(SPRING_UID, ({ strapi }) => ({
 
         if (!documentId) {
           const created = await strapi.documents(SPRING_UID).create({
-            data: springDataWithSearchName(strapi, {
-              name: st.name,
-              lat: st.lat,
-              lng: st.lng,
-              external_source: CHMU_SOURCE,
-              external_id: st.externalId,
+            data: {
+              ...canonicalStationData,
               source_locale: CHMU_SOURCE_LOCALE,
               current_status: "unknown",
-            }),
+            },
             locale: CHMU_SOURCE_LOCALE,
           });
           documentId = created.documentId;
@@ -877,13 +887,7 @@ export default factories.createCoreService(SPRING_UID, ({ strapi }) => ({
 
           await strapi.documents(SPRING_UID).update({
             documentId,
-            data: springDataWithSearchName(strapi, {
-              name: st.name,
-              lat: st.lat,
-              lng: st.lng,
-              external_source: CHMU_SOURCE,
-              external_id: st.externalId,
-            }),
+            data: canonicalStationData,
             locale: CHMU_SOURCE_LOCALE,
           });
           stats.localized_updated++;
@@ -900,6 +904,17 @@ export default factories.createCoreService(SPRING_UID, ({ strapi }) => ({
         await strapi.documents(SPRING_UID).publish({
           documentId,
           locale: CHMU_SOURCE_LOCALE,
+        });
+
+        // Strapi's non-localized-field propagation is scoped to the rows that
+        // participate in a Document Service operation. Publishing `cs` can
+        // therefore leave an already-published translation with stale shared
+        // values. Update only the source-owned scalar allowlist across every
+        // draft/published locale row; this preserves translated descriptions
+        // and never changes another locale's publication state.
+        await strapi.db.query(SPRING_UID).updateMany({
+          where: { documentId },
+          data: canonicalStationData,
         });
 
         if (stationWasCreated) {

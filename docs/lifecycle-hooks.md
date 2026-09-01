@@ -14,15 +14,22 @@ This document describes custom lifecycle hooks in this Strapi application.
 
 `beforeCreate` assigns private, non-localized `source_locale` once. ČHMÚ uses
 `cs`; a manually authored document uses its first creation locale (or the
-then-current i18n default when omitted). Creating publication/localization rows
-preserves the existing document value. `beforeUpdate` rejects changing an
-already assigned source locale with a Strapi validation error (HTTP 400 in the
-Content Manager API). A stale non-localized sync carrying `source_locale: null`
-cannot erase an established value. If an imported legacy row is already null,
-an unrelated editor update is allowed without writing that null back; operations
-must repair it using the documented database audit. Read endpoints log invalid
-source metadata and continue through their requested/default chain without the
-source step. This metadata is never exposed by the public API.
+then-current i18n default when omitted). The derived locale must exist in the
+current Strapi i18n configuration, and an explicit value must equal the actual
+creation locale. Creating a publication/localization row reads all existing
+physical rows: exactly one configured canonical `source_locale` must be present
+across them and any explicit payload value must match it. A new ČHMÚ document
+created outside `cs`, a conflicting payload, or inconsistent/missing persisted
+metadata is rejected with a Strapi validation error (HTTP 400 in the Content
+Manager API).
+
+`beforeUpdate` rejects changing an already assigned source locale. A stale
+non-localized sync carrying `source_locale: null` cannot erase an established
+value. If an imported legacy row is already null, an unrelated editor update is
+allowed without writing that null back; operations must repair it using the
+documented database audit. Read endpoints log invalid source metadata and
+continue through their requested/default chain without the source step. This
+metadata is never exposed by the public API.
 
 The field cannot be schema-level `required` while it is derived here: Strapi
 Document Service validates required creation fields before the database

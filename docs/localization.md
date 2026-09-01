@@ -75,25 +75,28 @@ normalized, the source-locale audit may report multiple distinct spellings even
 though reads compare their canonical form safely. Repair all physical rows
 together rather than relying on incidental editor updates.
 
-Existing non-localized fields are synchronized by Strapi to already-existing
-translations. Creating a brand-new ČHMÚ Spring, however, creates only its Czech
-variant with `source_locale = cs`. Source fallback keeps that Spring visible in
-map/search/detail even when the global default is English. ČHMÚ sync must not
-fabricate an empty English description.
+Strapi's non-localized-field propagation can miss physical rows in another
+publication state. The ČHMÚ sync therefore upserts and publishes only the Czech
+source variant, then explicitly copies a narrow canonical scalar allowlist to
+all existing draft/published locale rows. It never copies `description`, changes
+another locale's publication state, or creates a translation. A brand-new ČHMÚ
+Spring consequently still has only its Czech variant with `source_locale = cs`.
+Source fallback keeps it visible in map/search/detail even when the global
+default is English; the sync never fabricates an empty English description.
 
 ## Custom-code locale audit
 
-| Code path                                  | Current policy                                                              | Assessment                                                                                                                                     |
-| ------------------------------------------ | --------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
-| `syncFromChmu`                             | always writes configured `cs` and asserts `source_locale = cs`              | locale belongs to the source, not the UI default                                                                                               |
-| map (`findInBbox`)                         | per-document full fallback over published bbox rows                         | one complete row per `documentId`; `locale` is optional                                                                                        |
-| search                                     | canonical-name match across published rows, then per-document full fallback | stable deduplication; `locale` is active, not deprecated                                                                                       |
-| full detail / preview                      | exact/parents → same language → default → source                            | one whole document; null fields never continue fallback                                                                                        |
-| `refreshLatest`                            | raw-updates every locale row of one document                                | correct: status/timestamps/flow fields are non-localized                                                                                       |
-| Spring name lifecycle/bootstrap            | rebuilds `name_search` for the affected/all physical rows                   | correct normalization; the one-time migration, not bootstrap, enforces canonical-name equality                                                 |
-| QR lifecycle                               | checks the draft in the event's locale                                      | correct: avoids duplicate assets while preserving document identity                                                                            |
-| 1.5.0 canonical-name migration             | uses the default locale at migration time                                   | safe under the locked 1.5.0 rollout precondition (`cs` is default); do not reuse it as a general source-locale rule after changing the default |
-| Report, Owner, Platform Config, Newsletter | content types are not localized                                             | no Strapi i18n/default-locale coupling; newsletter `preferred_language` is communication metadata, not a content query locale                  |
+| Code path                                  | Current policy                                                              | Assessment                                                                                                                    |
+| ------------------------------------------ | --------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| `syncFromChmu`                             | upserts/publishes configured `cs`; propagates only canonical scalar fields  | locale belongs to the source; localized descriptions and other locales' publication states remain untouched                   |
+| map (`findInBbox`)                         | per-document full fallback over published bbox rows                         | one complete row per `documentId`; `locale` is optional                                                                       |
+| search                                     | canonical-name match across published rows, then per-document full fallback | stable deduplication; `locale` is active, not deprecated                                                                      |
+| full detail / preview                      | exact/parents → same language → default → source                            | one whole document; null fields never continue fallback                                                                       |
+| `refreshLatest`                            | raw-updates every locale row of one document                                | correct: status/timestamps/flow fields are non-localized                                                                      |
+| Spring name lifecycle/bootstrap            | rebuilds `name_search` for the affected/all physical rows                   | correct normalization; the one-time migration, not bootstrap, enforces canonical-name equality                                |
+| QR lifecycle                               | checks the draft in the event's locale                                      | correct: avoids duplicate assets while preserving document identity                                                           |
+| 1.5.0 source/canonical-name migrations     | infer immutable source first, then use that locale's name                   | ČHMÚ resolves to `cs`; the mutable global default never decides the official name                                             |
+| Report, Owner, Platform Config, Newsletter | content types are not localized                                             | no Strapi i18n/default-locale coupling; newsletter `preferred_language` is communication metadata, not a content query locale |
 
 The generic core `GET /api/springs` collection handler still uses native Strapi
 i18n selection and does not perform this custom per-document fallback. App
@@ -127,7 +130,7 @@ their source locale. ČHMÚ sync intentionally never creates translations.
 2. Back up the development SQLite file and production PostgreSQL database.
 3. Pause the ČHMÚ cron and prevent old/new instances from overlapping.
 4. Deploy 1.5.0 and let its transactional migration finish before schema sync.
-5. Run the canonical/default and source-locale diagnostic SQL from
+5. Run the ČHMÚ source-row and source-locale diagnostic SQL from
    [database migrations](./database-migrations.md), then verify row/document
    counts, document-level fallback on all four endpoints, and the expected 88
    local Springs.

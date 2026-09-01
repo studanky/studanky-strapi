@@ -11,75 +11,9 @@ a migration file.
 **Compatibility migration:** `database/migrations/2026.05.31T00.00.00.spring-report-indexes.js`
 is kept as a safe no-op for migration-history stability.
 
-## 1.5.0 canonical Spring name migration
-
-`database/migrations/2026.08.24T00.00.00.canonical-spring-name.js` prepares
-existing data before `name` and `name_search` become non-localized. Strapi runs
-the migration once, transactionally, before content-type schema sync.
-
-The migration is intentionally DML-only and uses portable Knex APIs for both
-development SQLite and production PostgreSQL. On a fresh database where the
-`springs` table does not yet exist, it exits safely. On an existing database it:
-
-1. validates all required Spring columns;
-2. reads `plugin_i18n_default_locale` from `strapi_core_store_settings` (there is
-   no hardcoded locale);
-3. groups rows by `document_id` and separately by draft/published state;
-4. requires exactly one default-locale row in every group;
-5. copies that row's canonical `name` to every existing localization and
-   rebuilds `name_search` with the application's normalization algorithm.
-
-It does not change row counts, `document_id`, locale, publication state,
-timestamps, or relations. Missing/ambiguous default variants fail the migration
-and roll back the transaction instead of guessing a canonical source.
-
-The automated SQLite fixture test is
-`tests/unit/canonical-spring-name-migration.test.ts`. Before production, rehearse
-the same migration against a temporary PostgreSQL database and an anonymized
-snapshot/count audit.
-
-### Preflight diagnostics
-
-Read the unscoped Strapi default locale first. The stored value is JSON, so a
-string locale is normally displayed with quotes, for example `"cs"`:
-
-```sql
-SELECT value
-FROM strapi_core_store_settings
-WHERE key = 'plugin_i18n_default_locale'
-  AND environment IS NULL
-  AND tag IS NULL;
-```
-
-Substitute that code for `<DEFAULT_LOCALE>` below. This portable SQLite and
-PostgreSQL query lists every draft/published group that would stop the
-canonical-name migration because it does not contain exactly one default row:
-
-```sql
-SELECT
-  document_id,
-  CASE
-    WHEN published_at IS NULL THEN 'draft'
-    ELSE 'published'
-  END AS publication_state,
-  COUNT(*) AS locale_rows,
-  SUM(CASE WHEN locale = '<DEFAULT_LOCALE>' THEN 1 ELSE 0 END) AS default_rows
-FROM springs
-GROUP BY
-  document_id,
-  CASE WHEN published_at IS NULL THEN 'draft' ELSE 'published' END
-HAVING SUM(CASE WHEN locale = '<DEFAULT_LOCALE>' THEN 1 ELSE 0 END) <> 1
-ORDER BY document_id, publication_state;
-```
-
-The result must be empty before deployment. If startup reports a failing
-`document_id`, create/repair its default draft or published variant, verify its
-canonical `name`, and restart the same application version. The failed
-transaction is not recorded as complete, so Strapi will retry it on startup.
-
 ## 1.5.0 Spring source-locale migration
 
-`database/migrations/2026.08.25T00.00.00.spring-source-locale.js` adds private,
+`database/migrations/2026.08.24T00.00.00.spring-source-locale.js` adds private,
 non-localized `source_locale` document metadata. Because migrations run before
 schema sync, it creates the column itself on an existing `springs` table; a
 fresh database remains a safe no-op and schema sync creates the field.
@@ -97,6 +31,61 @@ document. Row counts, content, locale, publication state, timestamps and
 relations do not change. Automated SQLite coverage lives in
 `tests/unit/spring-source-locale-migration.test.ts`; rehearse both 1.5.0
 migrations in filename order on PostgreSQL before production.
+
+## 1.5.0 canonical Spring name migration
+
+`database/migrations/2026.08.25T00.00.00.canonical-spring-name.js` runs after
+the source-locale backfill and prepares existing data before `name` and
+`name_search` become non-localized. Strapi runs each migration once,
+transactionally, before content-type schema sync.
+
+The migration is intentionally DML-only and uses portable Knex APIs for both
+development SQLite and production PostgreSQL. On a fresh database where the
+`springs` table does not yet exist, it exits safely. On an existing database it:
+
+1. validates all required Spring columns, including `source_locale`;
+2. groups rows by `document_id` and separately by draft/published state;
+3. requires one consistent source locale on every physical row in a group;
+4. requires exactly one source-locale row in every group;
+5. copies that row's official `name` to every existing localization and
+   rebuilds `name_search` with the application's normalization algorithm.
+
+It does not change row counts, `document_id`, locale, publication state,
+timestamps, or relations. Missing/ambiguous source variants fail the migration
+and roll back its transaction instead of guessing a canonical name.
+
+The automated SQLite fixture test is
+`tests/unit/canonical-spring-name-migration.test.ts`. Before production, rehearse
+both migrations in filename order against a temporary PostgreSQL database and
+an anonymized snapshot/count audit.
+
+### ČHMÚ production preflight
+
+The current production dataset contains only ČHMÚ Springs, whose authoritative
+source locale is `cs`. This portable SQLite/PostgreSQL query must return no rows;
+it lists every draft/published group that lacks exactly one Czech source row:
+
+```sql
+SELECT
+  document_id,
+  CASE
+    WHEN published_at IS NULL THEN 'draft'
+    ELSE 'published'
+  END AS publication_state,
+  COUNT(*) AS locale_rows,
+  SUM(CASE WHEN locale = 'cs' THEN 1 ELSE 0 END) AS source_rows
+FROM springs
+WHERE external_source = 'chmu'
+GROUP BY
+  document_id,
+  CASE WHEN published_at IS NULL THEN 'draft' ELSE 'published' END
+HAVING SUM(CASE WHEN locale = 'cs' THEN 1 ELSE 0 END) <> 1
+ORDER BY document_id, publication_state;
+```
+
+If startup reports a failing `document_id`, repair its source draft/published
+variant, verify the official source name, and restart the same application
+version. A failed migration is not recorded as complete, so Strapi retries it.
 
 After migration or data transfer, the following audit must also return no rows:
 

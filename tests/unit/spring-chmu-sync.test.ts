@@ -39,6 +39,7 @@ function buildService(
   const publish = vi.fn(async () => ({ documentId: "spring-1" }));
   const reportCreate = vi.fn();
   const dbFindOne = vi.fn(async (args) => findExisting(args));
+  const dbUpdateMany = vi.fn(async () => ({ count: 2 }));
   const log = {
     debug: vi.fn(),
     info: vi.fn(),
@@ -61,7 +62,7 @@ function buildService(
         : { create: reportCreate },
     ),
     db: {
-      query: vi.fn(() => ({ findOne: dbFindOne })),
+      query: vi.fn(() => ({ findOne: dbFindOne, updateMany: dbUpdateMany })),
     },
     plugin: vi.fn(() => ({ service: vi.fn(() => localesService) })),
     service: vi.fn(() => ({
@@ -80,6 +81,7 @@ function buildService(
     publish,
     reportCreate,
     dbFindOne,
+    dbUpdateMany,
     log,
   };
 }
@@ -93,9 +95,12 @@ beforeEach(() => {
 
 describe("spring.syncFromChmu localization", () => {
   it("creates and publishes a new station only in Czech even when default is English", async () => {
-    const { service, create, update, publish } = buildService(() => null, {
-      defaultLocale: "en",
-    });
+    const { service, create, update, publish, dbUpdateMany } = buildService(
+      () => null,
+      {
+        defaultLocale: "en",
+      },
+    );
 
     const stats = await service.syncFromChmu();
 
@@ -113,6 +118,17 @@ describe("spring.syncFromChmu localization", () => {
       documentId: "spring-1",
       locale: "cs",
     });
+    expect(dbUpdateMany).toHaveBeenCalledWith({
+      where: { documentId: "spring-1" },
+      data: {
+        name: "Žofínský pramen",
+        name_search: "zofinsky pramen",
+        lat: 49.1,
+        lng: 16.6,
+        external_source: "chmu",
+        external_id: "CHMU-1",
+      },
+    });
     expect(stats).toMatchObject({
       locales: ["cs", "en", "de"],
       default_locale: "en",
@@ -126,12 +142,15 @@ describe("spring.syncFromChmu localization", () => {
   });
 
   it("does not publish when create returns no documentId", async () => {
-    const { service, create, publish, log } = buildService(() => null);
+    const { service, create, publish, dbUpdateMany, log } = buildService(
+      () => null,
+    );
     create.mockResolvedValueOnce({ documentId: undefined });
 
     const stats = await service.syncFromChmu();
 
     expect(publish).not.toHaveBeenCalled();
+    expect(dbUpdateMany).not.toHaveBeenCalled();
     expect(stats).toMatchObject({
       created: 0,
       localized_created: 0,
@@ -142,8 +161,8 @@ describe("spring.syncFromChmu localization", () => {
     );
   });
 
-  it("updates only the existing Czech variant and leaves translated content out of the write", async () => {
-    const { service, create, update, publish } = buildService(
+  it("publishes only Czech and propagates only canonical scalar fields to every existing row", async () => {
+    const { service, create, update, publish, dbUpdateMany } = buildService(
       (args: any) =>
         args.where.documentId
           ? { id: 10 }
@@ -169,6 +188,23 @@ describe("spring.syncFromChmu localization", () => {
     });
     expect(update.mock.calls[0][0].data).not.toHaveProperty("description");
     expect(publish).toHaveBeenCalledTimes(1);
+    expect(dbUpdateMany).toHaveBeenCalledTimes(1);
+    expect(dbUpdateMany).toHaveBeenCalledWith({
+      where: { documentId: "spring-1" },
+      data: {
+        name: "Žofínský pramen",
+        name_search: "zofinsky pramen",
+        lat: 49.1,
+        lng: 16.6,
+        external_source: "chmu",
+        external_id: "CHMU-1",
+      },
+    });
+    const sharedData = dbUpdateMany.mock.calls[0][0].data;
+    expect(sharedData).not.toHaveProperty("description");
+    expect(sharedData).not.toHaveProperty("source_locale");
+    expect(sharedData).not.toHaveProperty("publishedAt");
+    expect(sharedData).not.toHaveProperty("current_status");
     expect(stats).toMatchObject({
       updated: 1,
       localized_created: 0,
@@ -194,23 +230,25 @@ describe("spring.syncFromChmu localization", () => {
   });
 
   it("records an error and makes no write when the Czech variant is missing", async () => {
-    const { service, create, update, publish, log } = buildService(
-      (args: any) =>
-        args.where.documentId
-          ? null
-          : {
-              documentId: "spring-1",
-              status_updated_at: null,
-              source_locale: "cs",
-            },
-      { defaultLocale: "en" },
-    );
+    const { service, create, update, publish, dbUpdateMany, log } =
+      buildService(
+        (args: any) =>
+          args.where.documentId
+            ? null
+            : {
+                documentId: "spring-1",
+                status_updated_at: null,
+                source_locale: "cs",
+              },
+        { defaultLocale: "en" },
+      );
 
     const stats = await service.syncFromChmu();
 
     expect(create).not.toHaveBeenCalled();
     expect(update).not.toHaveBeenCalled();
     expect(publish).not.toHaveBeenCalled();
+    expect(dbUpdateMany).not.toHaveBeenCalled();
     expect(stats).toMatchObject({ updated: 0, errors: 1, skipped: 0 });
     expect(log.error).toHaveBeenCalledWith(
       expect.stringContaining("has no draft in ČHMÚ source locale cs"),
@@ -218,16 +256,19 @@ describe("spring.syncFromChmu localization", () => {
   });
 
   it("rejects a ČHMÚ document whose immutable source locale is not Czech", async () => {
-    const { service, update, publish, log } = buildService(() => ({
-      documentId: "spring-1",
-      status_updated_at: null,
-      source_locale: "en",
-    }));
+    const { service, update, publish, dbUpdateMany, log } = buildService(
+      () => ({
+        documentId: "spring-1",
+        status_updated_at: null,
+        source_locale: "en",
+      }),
+    );
 
     const stats = await service.syncFromChmu();
 
     expect(update).not.toHaveBeenCalled();
     expect(publish).not.toHaveBeenCalled();
+    expect(dbUpdateMany).not.toHaveBeenCalled();
     expect(stats.errors).toBe(1);
     expect(log.error).toHaveBeenCalledWith(
       expect.stringContaining("expected cs for ČHMÚ"),
@@ -235,10 +276,13 @@ describe("spring.syncFromChmu localization", () => {
   });
 
   it("fails before fetching source data when Czech is not configured", async () => {
-    const { service, create, update, publish } = buildService(() => null, {
-      defaultLocale: "en",
-      configured: ["en", "de"],
-    });
+    const { service, create, update, publish, dbUpdateMany } = buildService(
+      () => null,
+      {
+        defaultLocale: "en",
+        configured: ["en", "de"],
+      },
+    );
 
     await expect(service.syncFromChmu()).rejects.toThrow(
       "requires configured source locale cs",
@@ -247,5 +291,6 @@ describe("spring.syncFromChmu localization", () => {
     expect(create).not.toHaveBeenCalled();
     expect(update).not.toHaveBeenCalled();
     expect(publish).not.toHaveBeenCalled();
+    expect(dbUpdateMany).not.toHaveBeenCalled();
   });
 });

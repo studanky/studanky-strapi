@@ -23,9 +23,13 @@ follows [Semantic Versioning](https://semver.org/).
 - Changed ČHMÚ synchronization to create, update, and publish only the Czech
   (`cs`) source variant, independently of the mutable Strapi default locale. It
   no longer creates empty translation rows or changes translated descriptions.
-  Sync stats retain all existing keys and add `default_locale` plus
-  `sync_locale`; `localized_created` and `localized_updated` now count Czech
-  variant operations.
+  After publishing Czech, an explicit scalar allowlist propagates the canonical
+  `name`, `name_search`, coordinates and external-source identifiers to every
+  existing draft/published locale row. This closes Strapi's publication-state
+  synchronization gap without publishing another locale or touching its
+  localized content. Sync stats retain all existing keys and add
+  `default_locale` plus `sync_locale`; `localized_created` and
+  `localized_updated` count Czech variant operations.
 - Added private, non-localized `spring.source_locale` document metadata. ČHMÚ
   documents always use `cs`; manually authored documents retain the locale in
   which they were first created. Preferred ambiguous English siblings are
@@ -40,27 +44,29 @@ follows [Semantic Versioning](https://semver.org/).
   visible. One shared canonical configured-locale index is reused by the base
   chain and source fallback, while per-row locale parsing and fallback attempts
   remain cached within each request.
-- Source-locale lifecycle validation now reports editor changes as a Strapi
-  validation error and tolerates legacy non-localized sync payloads carrying an
-  unchanged null value without allowing them to erase an established source.
+- Source-locale lifecycle validation now derives new-document metadata only
+  from its creation locale, verifies that the locale is configured, and checks
+  every existing physical row before creating a publication/localization row.
+  Explicit conflicting values, inconsistent rows and attempts to create a ČHMÚ
+  document outside `cs` fail with a Strapi validation error. Update handling
+  still tolerates legacy non-localized sync payloads carrying an unchanged null
+  value without allowing them to erase an established source.
 
 ### Migration
 
-- Added the portable transactional migration
-  `2026.08.24T00.00.00.canonical-spring-name.js`. Before schema sync, it reads
-  the default locale from Strapi's i18n core-store setting, uses its draft and
-  published rows as separate canonical sources, copies `name` to existing
-  translations, and rebuilds `name_search`. It does not add/remove rows or
-  modify locale, publication state, timestamps, or relations.
-- The migration fails if the default locale cannot be determined or a
-  document/publication-state group lacks exactly one default-locale row.
-  Its core-store lookup matches Strapi's unscoped `environment IS NULL` and
-  `tag IS NULL` semantics; preflight diagnostic SQL is documented.
-- Added `2026.08.25T00.00.00.spring-source-locale.js`, which creates and
+- Added `2026.08.24T00.00.00.spring-source-locale.js`, which creates and
   backfills `source_locale` without changing row counts, content, publication
   state, timestamps, or relations. It assigns ČHMÚ documents to `cs`, preserves
   an existing consistent value, and otherwise uses an unambiguous single or
   first-created locale. Ambiguous data fails and rolls back instead of guessing.
+- Added the subsequent portable transactional migration
+  `2026.08.25T00.00.00.canonical-spring-name.js`. Before schema sync, it uses
+  each document's immutable source-locale draft and published rows as separate
+  canonical sources, copies `name` to existing translations, and rebuilds
+  `name_search`. It does not add/remove rows or modify locale, publication
+  state, timestamps, or relations.
+- The canonical-name migration fails if a document/publication-state group has
+  inconsistent source metadata or lacks exactly one row in its source locale.
 - Strapi does not support down migrations. Rollback requires restoring the
   pre-deployment database backup and deploying the previous application
   version.

@@ -1,7 +1,9 @@
 "use strict";
 
 /**
- * Persists the immutable source locale of every Spring document.
+ * Persists the immutable source locale of every Spring document. This migration
+ * runs before the canonical-name migration, which uses the source row as the
+ * authoritative official name.
  *
  * Strapi runs migrations before schema sync, so this migration creates the new
  * column itself on an existing database. A fresh database has no `springs`
@@ -33,14 +35,14 @@ function inferSourceLocale(documentId, rows) {
       rows
         .map((row) => row.source_locale)
         .filter((value) => typeof value === "string" && value.trim())
-        .map((value) => value.trim())
+        .map((value) => value.trim()),
     ),
   ];
   if (existing.length > 1) {
     throw new Error(
       `Spring source-locale migration found conflicting source locales for document ${documentId}: ${existing.join(
-        ", "
-      )}`
+        ", ",
+      )}`,
     );
   }
 
@@ -48,7 +50,7 @@ function inferSourceLocale(documentId, rows) {
   if (existing.length === 1) {
     if (!locales.includes(existing[0])) {
       throw new Error(
-        `Spring source-locale migration cannot find source variant ${existing[0]} for document ${documentId}`
+        `Spring source-locale migration cannot find source variant ${existing[0]} for document ${documentId}`,
       );
     }
     return existing[0];
@@ -57,7 +59,7 @@ function inferSourceLocale(documentId, rows) {
   if (rows.some((row) => row.external_source === "chmu")) {
     if (!locales.includes("cs")) {
       throw new Error(
-        `ČHMÚ Spring ${documentId} has no Czech source-locale row`
+        `ČHMÚ Spring ${documentId} has no Czech source-locale row`,
       );
     }
     return "cs";
@@ -76,7 +78,7 @@ function inferSourceLocale(documentId, rows) {
     const value = timestamp(row.created_at);
     if (value == null) {
       throw new Error(
-        `Spring source-locale migration cannot parse created_at for document ${documentId}, row ${row.id}`
+        `Spring source-locale migration cannot parse created_at for document ${documentId}, row ${row.id}`,
       );
     }
     const previous = earliestByLocale.get(row.locale);
@@ -92,8 +94,8 @@ function inferSourceLocale(documentId, rows) {
   if (candidates.length !== 1) {
     throw new Error(
       `Spring source-locale migration cannot infer an unambiguous source locale for document ${documentId}; candidates: ${candidates.join(
-        ", "
-      )}`
+        ", ",
+      )}`,
     );
   }
   return candidates[0];
@@ -114,8 +116,8 @@ module.exports = {
     if (missing.length > 0) {
       throw new Error(
         `Spring source-locale migration cannot run: springs is missing columns ${missing.join(
-          ", "
-        )}`
+          ", ",
+        )}`,
       );
     }
 
@@ -133,7 +135,7 @@ module.exports = {
     for (const row of rows) {
       if (!row.document_id || !row.locale) {
         throw new Error(
-          `Spring source-locale migration found invalid Spring row id=${row.id}`
+          `Spring source-locale migration found invalid Spring row id=${row.id}`,
         );
       }
       const group = byDocument.get(row.document_id) ?? [];
