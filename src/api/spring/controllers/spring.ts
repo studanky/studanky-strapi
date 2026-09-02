@@ -8,25 +8,42 @@ const SPRING_UID = "api::spring.spring";
 
 export default factories.createCoreController(SPRING_UID, ({ strapi }) => ({
   /**
-   * GET /api/springs/map?bbox=minLng,minLat,maxLng,maxLat
+   * GET /api/springs/:documentId?locale=
+   * Core-compatible detail response with document-level locale fallback.
+   */
+  async findOne(ctx) {
+    const documentId = ctx.params.documentId ?? ctx.params.id;
+    await this.validateQuery(ctx);
+    const sanitizedQuery = await this.sanitizeQuery(ctx);
+    const entity = await strapi
+      .service(SPRING_UID)
+      .findOneWithLocaleFallback(documentId, sanitizedQuery);
+    const sanitizedEntity = await this.sanitizeOutput(entity, ctx);
+    return this.transformResponse(sanitizedEntity);
+  },
+
+  /**
+   * GET /api/springs/map?bbox=minLng,minLat,maxLng,maxLat&locale=en-AU
    * Minimal public payload for the map. Logic lives in the service.
    */
   async map(ctx) {
     await this.validateQuery(ctx);
 
-    const { bbox } = ctx.query;
+    const { bbox, locale } = ctx.query;
     if (!bbox || typeof bbox !== "string") {
       return ctx.badRequest(
-        'Missing or invalid "bbox" query (expected "minLng,minLat,maxLng,maxLat")'
+        'Missing or invalid "bbox" query (expected "minLng,minLat,maxLng,maxLat")',
       );
     }
 
-    const points = await strapi.service(SPRING_UID).findInBbox(bbox);
+    const points = await strapi
+      .service(SPRING_UID)
+      .findInBbox(bbox, typeof locale === "string" ? locale : undefined);
     return { data: points };
   },
 
   /**
-   * GET /api/springs/search?q=&lat=&lng=&limit=&locale=
+   * GET /api/springs/search?q=&lat=&lng=&limit=&locale=en-AU
    * Name autocomplete for the map search box. Returns map-safe fields so a
    * picked result can fly the map to its coordinates. With a valid lat/lng
    * origin, results are nearest-first (+ `distance_m`). Logic lives in the
@@ -38,7 +55,7 @@ export default factories.createCoreController(SPRING_UID, ({ strapi }) => ({
     const { q, lat, lng, limit, locale } = ctx.query;
     if (!q || typeof q !== "string" || q.trim().length < 2) {
       return ctx.badRequest(
-        'Missing or too short "q" query (minimum 2 characters)'
+        'Missing or too short "q" query (minimum 2 characters)',
       );
     }
 

@@ -3,20 +3,48 @@
 This document describes custom lifecycle hooks in this Strapi application.
 
 > **Design note:** lifecycle hooks are used only for self-contained work on the
-> Spring itself (search-name synchronization and QR generation below).
+> Spring itself (source-locale/search-name invariants and QR generation below).
 > Cross-entity business logic — notably status denormalization — lives in
 > services, not hooks, so it is deterministic and testable. See
 > [Status Denormalization](./denormalization.md).
 
 ## Spring Content Type
 
+### Source Locale Invariant
+
+`beforeCreate` assigns private, non-localized `source_locale` once. ČHMÚ uses
+`cs`; a manually authored document uses its first creation locale (or the
+then-current i18n default when omitted). The derived locale must exist in the
+current Strapi i18n configuration, and an explicit value must equal the actual
+creation locale. Creating a publication/localization row reads all existing
+physical rows: exactly one configured canonical `source_locale` must be present
+across them and any explicit payload value must match it. A new ČHMÚ document
+created outside `cs`, a conflicting payload, or inconsistent/missing persisted
+metadata is rejected with a Strapi validation error (HTTP 400 in the Content
+Manager API).
+
+`beforeUpdate` rejects changing an already assigned source locale. A stale
+non-localized sync carrying `source_locale: null` cannot erase an established
+value. If an imported legacy row is already null, an unrelated editor update is
+allowed without writing that null back; operations must repair it using the
+documented database audit. Read endpoints log invalid source metadata and
+continue through their requested/default chain without the source step. This
+metadata is never exposed by the public API.
+
+The field cannot be schema-level `required` while it is derived here: Strapi
+Document Service validates required creation fields before the database
+`beforeCreate` lifecycle. Migration, create assignment, update protection and
+deployment audits jointly enforce the invariant without breaking normal Admin
+UI creation.
+
 ### Search Name Synchronization
 
 **Location:** `src/api/spring/content-types/spring/lifecycles.ts`
 
-When a Spring's localized `name` is created or updated, the private localized
-`name_search` field is updated to a lowercase, accent-free copy. This supports
-public search queries without diacritics, e.g. `vyprachtice` → `Výprachtice`.
+When a Spring's canonical, non-localized `name` is created or updated, the
+private non-localized `name_search` field is updated to a lowercase, accent-free
+copy. This supports public search queries without diacritics, e.g.
+`vyprachtice` → `Výprachtice`.
 
 The hook is guarded so it only writes `name_search` after the field exists in
 the content type.
@@ -88,12 +116,12 @@ Example content when scanned: `g39qdkl2c0ptrpl081d8kcvd`
 
 #### Configuration
 
-| Setting | Value |
-|---------|-------|
-| Image Size | 512×512 pixels |
-| Format | PNG |
+| Setting          | Value                   |
+| ---------------- | ----------------------- |
+| Image Size       | 512×512 pixels          |
+| Format           | PNG                     |
 | Error Correction | High (H) — 30% recovery |
-| Margin | 2 modules |
+| Margin           | 2 modules               |
 
 #### Dependencies
 
@@ -121,9 +149,9 @@ Deploy the lifecycle fix **before** running it, otherwise the next nightly sync
 recreates fresh orphans.
 
 **Reaching one QR per spring takes two passes.** Legacy springs affected by the
-old bug have *two* still-linked QR files — the draft's and the current
+old bug have _two_ still-linked QR files — the draft's and the current
 published's (different files, same encoded `documentId`). The orphan cleanup only
-removes *unlinked* files, so a single run right after deploy leaves those two in
+removes _unlinked_ files, so a single run right after deploy leaves those two in
 place. On the next fixed sync, `publish()` clones the draft's QR onto the new
 published row and deletes the old published row, orphaning its file; a **second
 cleanup run** then removes it, leaving one file per spring:
@@ -141,12 +169,14 @@ Library. Springs created after the fix have exactly one file from the start.
 #### Logs
 
 Successful generation:
+
 ```
 [info] Spring <documentId>: Generating QR code...
 [info] Spring <documentId>: QR code uploaded successfully (file id: <id>)
 ```
 
 Error case:
+
 ```
 [error] Spring <documentId>: Failed to generate/upload QR code <error details>
 ```

@@ -1,8 +1,9 @@
 # Roadmap & Next Steps
 
 Current state: **MVP backend alignment is complete** — canonical source-neutral
-model, ČHMÚ sync (cron + manual), denormalized map status, public map + history
-endpoints, admin manager scoping. The items below are recommended follow-ups.
+model, ČHMÚ sync (cron + manual), denormalized map status, document-level locale
+fallback, public map/search/detail/preview/history endpoints, and admin manager
+scoping. The items below are recommended follow-ups.
 
 ## Immediate (config / ops — no code)
 
@@ -10,8 +11,9 @@ endpoints, admin manager scoping. The items below are recommended follow-ups.
   `flow_scale` stays `null`. Tune the l/s → 1–5 buckets to the real discharge
   distribution revealed by the first sync (návrh §10). See [denormalization](./denormalization.md#flow-scale).
 - **Grant Public-role permissions** for the read endpoints that should be open:
-  `spring.findOne`, `platform-config.find` (the custom `map` / `reports` routes are
-  already `auth:false`). **Do NOT enable any `report.*` action** — reports are
+  `spring.findOne`, `platform-config.find` (the custom `map`, `search`, `preview`
+  and `reports` routes are already `auth:false`). **Do NOT enable any `report.*`
+  action** — reports are
   read via spring history only. See [Public API](./public-api.md).
 - **Keep reports append-only**: `report.update` and `report.delete` should never
   be public capabilities.

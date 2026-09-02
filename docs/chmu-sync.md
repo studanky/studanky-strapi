@@ -9,12 +9,12 @@ of the backend only ever sees the canonical model.
 
 ## Components
 
-| Concern | Location |
-|---|---|
-| Source adapter (fetch + parse, no Strapi model) | `src/api/spring/services/chmu-client.ts` |
+| Concern                                                 | Location                                               |
+| ------------------------------------------------------- | ------------------------------------------------------ |
+| Source adapter (fetch + parse, no Strapi model)         | `src/api/spring/services/chmu-client.ts`               |
 | Sync orchestration (canonical mapping, upsert, reports) | `src/api/spring/services/spring.ts` → `syncFromChmu()` |
-| Scheduled trigger | `config/cron-tasks.ts` + `config/server.ts` (`cron`) |
-| Manual trigger (ops) | `POST /api/springs/sync-chmu` → `spring.syncChmu` |
+| Scheduled trigger                                       | `config/cron-tasks.ts` + `config/server.ts` (`cron`)   |
+| Manual trigger (ops)                                    | `POST /api/springs/sync-chmu` → `spring.syncChmu`      |
 
 ## Adapter — `chmu-client.ts`
 
@@ -46,8 +46,20 @@ runs in three phases:
 
 1. **Upsert stations** (sequential, SQLite-friendly). Looked up by
    `(external_source, external_id)` across localized Spring rows. Each station is
-   created/updated and published in **every configured i18n locale**. New springs
-   start `current_status = 'unknown'`.
+   created/updated and published only in the **Czech source locale (`cs`)**,
+   regardless of the current Strapi default locale. The sync fails before
+   downloading ČHMÚ data when `cs` is not configured. New documents store the
+   immutable private `source_locale = 'cs'`; existing ČHMÚ documents must have
+   that same source value or the station is rejected as inconsistent. After the
+   Czech publish, the sync explicitly copies only its source-owned scalar
+   allowlist (`name`, `name_search`, coordinates, `external_source`,
+   `external_id`) to every physical draft/published row of the document. This is
+   required because Strapi's propagation of non-localized fields does not cover
+   all publication states. Existing translations are never created or
+   published, their publication state stays unchanged, and their localized
+   `description` is never written. New springs start `current_status =
+'unknown'`. If an existing document lacks a Czech draft, that station is
+   skipped and `errors` is incremented.
 2. **Fetch latest values** with bounded concurrency (limit 8): `now/` first,
    then `recent/` (current → previous month) when `now/` has no file. One
    failure never aborts the run (`try/catch` per object).
@@ -78,14 +90,29 @@ phase-1 `findFirst`-before-`create` upsert. See [Database & Migrations](./databa
 `syncFromChmu()` returns and logs a summary:
 
 ```json
-{ "stations": 85, "locales": ["cs"], "created": 85, "updated": 0, "localized_created": 85, "localized_updated": 0, "reports": 85, "recent": 46, "skipped": 0, "errors": 0 }
+{
+  "stations": 85,
+  "locales": ["cs", "en"],
+  "default_locale": "en",
+  "sync_locale": "cs",
+  "created": 85,
+  "updated": 0,
+  "localized_created": 85,
+  "localized_updated": 0,
+  "reports": 85,
+  "recent": 46,
+  "skipped": 0,
+  "errors": 0
+}
 ```
 
-`localized_created` / `localized_updated` count locale-specific Spring rows.
-With two configured locales and a fresh import, `created` is still 85 station
-documents while `localized_created` is 170 localized rows. `recent` = values
-served by the `recent/` fallback (no `now/` file). `skipped` = stations with no
-value anywhere, or whose `dt` is not newer than the cached one.
+All pre-1.5 stats keys remain present. `locales` still lists every configured
+locale. `default_locale` reports the current Strapi read default, while
+`sync_locale` identifies the variant written by ČHMÚ and is always `cs`.
+`localized_created` / `localized_updated` now count create/update operations on
+the Czech variant, not operations multiplied by the number of locales.
+`recent` = values served by the `recent/` fallback (no `now/` file). `skipped` =
+stations with no value anywhere, or whose `dt` is not newer than the cached one.
 
 ## Scheduling
 
@@ -107,11 +134,19 @@ Preferred internal run (no HTTP, no API token):
 npm run sync:chmu
 ```
 
-The script does not choose or mutate the locale. It loads Strapi, reads all
-configured i18n locales, and the sync service writes Spring rows to all of them.
+The script does not choose or mutate the global default. It loads Strapi,
+verifies that `cs` is configured, and upserts/publishes only the Czech Spring
+variant. Existing variants receive only the canonical non-localized scalar
+allowlist described above.
 
 HTTP ops endpoint:
 
 `POST /api/springs/sync-chmu` (authenticated — call with an admin API token).
 Returns the same stats object. Keep this for remote automation where a shell on
 the Strapi host/container is not available.
+
+Changing the global default locale does not change `sync_locale`. Follow the
+[default-locale runbook](./localization.md#changing-the-global-default-locale).
+Map/search perform per-document fallback and therefore keep newly imported
+Czech-only Springs visible through their `source_locale = cs`, even after the
+global default changes.

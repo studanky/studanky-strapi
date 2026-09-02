@@ -41,6 +41,7 @@ async function main() {
     );
 
     const stats = await app.service("api::spring.spring").syncFromChmu();
+    console.log(`ČHMÚ sync locale: ${stats.sync_locale}`);
     console.log(JSON.stringify({ data: stats }, null, 2));
 
     if (stats.errors > 0) {

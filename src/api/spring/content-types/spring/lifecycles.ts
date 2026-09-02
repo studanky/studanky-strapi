@@ -2,21 +2,203 @@ import QRCode from "qrcode";
 import * as fs from "fs";
 import * as path from "path";
 import * as os from "os";
+import { errors } from "@strapi/utils";
 import { normalizeSearchText } from "../../../../utils/search";
+import {
+  canonicalizeLocaleTag,
+  indexConfiguredLocales,
+  type ConfiguredLocaleIndex,
+} from "../../../../utils/locale";
 
 const SPRING_UID = "api::spring.spring";
+const CHMU_SOURCE_LOCALE = "cs";
 
 const syncNameSearch = (data: Record<string, unknown>) => {
   const attributes = strapi.contentTypes[SPRING_UID]?.attributes as
     | Record<string, unknown>
     | undefined;
 
-  if (
-    typeof data.name === "string" &&
-    attributes?.["name_search"]
-  ) {
+  if (typeof data.name === "string" && attributes?.["name_search"]) {
     data.name_search = normalizeSearchText(data.name);
   }
+};
+
+const getConfiguredLocaleIndex = async (): Promise<ConfiguredLocaleIndex> => {
+  const locales = (await strapi
+    .plugin("i18n")
+    .service("locales")
+    .find()) as Array<{ code?: unknown }>;
+  const codes = locales
+    .map(({ code }) => (typeof code === "string" ? code : ""))
+    .filter(Boolean);
+  if (codes.length === 0) {
+    throw new Error("Strapi i18n has no configured locales");
+  }
+  return indexConfiguredLocales(codes);
+};
+
+const canonicalConfiguredLocale = (
+  value: unknown,
+  configuredByCanonical: ConfiguredLocaleIndex,
+  field = "source_locale",
+): string => {
+  const canonical = canonicalizeLocaleTag(
+    typeof value === "string" ? value : undefined,
+  );
+  if (!canonical) {
+    throw new errors.ValidationError(
+      `Spring ${field} must be a valid locale code`,
+    );
+  }
+  if (!configuredByCanonical.has(canonical)) {
+    throw new errors.ValidationError(
+      `Spring ${field} must be configured in Strapi i18n`,
+    );
+  }
+  return canonical;
+};
+
+/**
+ * Source locale belongs to the whole document and is assigned exactly once.
+ * Publication clones/localizations keep the already persisted value; a new
+ * ČHMÚ document is always Czech, and any other new document uses the locale in
+ * which it was first created (or the then-current Strapi default).
+ */
+const ensureSourceLocaleOnCreate = async (data: Record<string, unknown>) => {
+  const configuredByCanonical = await getConfiguredLocaleIndex();
+
+  const documentId =
+    typeof data.documentId === "string" ? data.documentId : undefined;
+  if (documentId) {
+    const existingRows = (await strapi.db.query(SPRING_UID).findMany({
+      where: { documentId },
+      select: ["source_locale"],
+      orderBy: { id: "asc" },
+    })) as Array<{ source_locale?: string | null }>;
+    if (existingRows.length > 0) {
+      const sources = existingRows.map((row) =>
+        canonicalConfiguredLocale(row.source_locale, configuredByCanonical),
+      );
+      const distinctSources = [...new Set(sources)];
+      if (distinctSources.length !== 1) {
+        throw new errors.ValidationError(
+          "Spring has conflicting source_locale values across its physical rows",
+        );
+      }
+
+      const persisted = distinctSources[0];
+      if (typeof data.source_locale === "string" && data.source_locale.trim()) {
+        const requested = canonicalConfiguredLocale(
+          data.source_locale,
+          configuredByCanonical,
+        );
+        if (requested !== persisted) {
+          throw new errors.ValidationError(
+            "Spring source_locale is immutable across document localizations",
+          );
+        }
+      }
+      data.source_locale = persisted;
+      return;
+    }
+  }
+
+  const creationLocale =
+    typeof data.locale === "string"
+      ? data.locale
+      : await strapi.plugin("i18n").service("locales").getDefaultLocale();
+  if (!creationLocale) {
+    throw new Error("Strapi i18n default locale is not configured");
+  }
+  const canonicalCreationLocale = canonicalConfiguredLocale(
+    creationLocale,
+    configuredByCanonical,
+    "creation locale",
+  );
+  const requestedSource =
+    typeof data.source_locale === "string" && data.source_locale.trim()
+      ? canonicalConfiguredLocale(data.source_locale, configuredByCanonical)
+      : canonicalCreationLocale;
+
+  if (requestedSource !== canonicalCreationLocale) {
+    throw new errors.ValidationError(
+      "A new Spring source_locale must equal its creation locale",
+    );
+  }
+  if (
+    data.external_source === "chmu" &&
+    canonicalCreationLocale !== CHMU_SOURCE_LOCALE
+  ) {
+    throw new errors.ValidationError(
+      `ČHMÚ Springs must be created in locale ${CHMU_SOURCE_LOCALE}`,
+    );
+  }
+  data.source_locale = requestedSource;
+};
+
+const preventSourceLocaleChange = async (event: {
+  params: {
+    data: Record<string, unknown>;
+    where?: Record<string, unknown>;
+  };
+}) => {
+  const { data, where } = event.params;
+  if (!Object.prototype.hasOwnProperty.call(data, "source_locale")) {
+    return;
+  }
+
+  const configuredByCanonical = await getConfiguredLocaleIndex();
+
+  const existing = where
+    ? ((await strapi.db.query(SPRING_UID).findOne({
+        where,
+        select: ["source_locale"],
+      })) as { source_locale?: string | null } | null)
+    : null;
+
+  // Data transfer and an old-version rollback can leave legacy rows with NULL.
+  // A non-localized-field sync may then submit the key as `source_locale: null`
+  // during an unrelated Content Manager edit. Do not turn that no-op into a
+  // 500; leave the missing value untouched so the data can be repaired by the
+  // documented audit/backfill procedure.
+  if (!existing?.source_locale) {
+    if (
+      data.source_locale == null ||
+      (typeof data.source_locale === "string" && !data.source_locale.trim())
+    ) {
+      delete data.source_locale;
+      return;
+    }
+    data.source_locale = canonicalConfiguredLocale(
+      data.source_locale,
+      configuredByCanonical,
+    );
+    return;
+  }
+
+  const persisted = canonicalConfiguredLocale(
+    existing.source_locale,
+    configuredByCanonical,
+  );
+  if (
+    data.source_locale == null ||
+    (typeof data.source_locale === "string" && !data.source_locale.trim())
+  ) {
+    // Never let a stale NULL synchronization erase an established source.
+    data.source_locale = persisted;
+    return;
+  }
+
+  const requested = canonicalConfiguredLocale(
+    data.source_locale,
+    configuredByCanonical,
+  );
+  if (persisted !== requested) {
+    throw new errors.ValidationError(
+      "Spring source_locale is immutable after creation",
+    );
+  }
+  data.source_locale = persisted;
 };
 
 /**
@@ -53,10 +235,17 @@ export function shouldGenerateQr(args: {
 export default {
   async beforeCreate(event: { params: { data: Record<string, unknown> } }) {
     syncNameSearch(event.params.data);
+    await ensureSourceLocaleOnCreate(event.params.data);
   },
 
-  async beforeUpdate(event: { params: { data: Record<string, unknown> } }) {
+  async beforeUpdate(event: {
+    params: {
+      data: Record<string, unknown>;
+      where?: Record<string, unknown>;
+    };
+  }) {
     syncNameSearch(event.params.data);
+    await preventSourceLocaleChange(event);
   },
 
   async afterCreate(event: {
@@ -97,7 +286,7 @@ export default {
       })
     ) {
       strapi.log.debug(
-        `Spring ${documentId}: QR code already exists, skipping generation`
+        `Spring ${documentId}: QR code already exists, skipping generation`,
       );
       return;
     }
@@ -145,14 +334,14 @@ export default {
         });
 
       strapi.log.info(
-        `Spring ${documentId}: QR code uploaded successfully (file id: ${uploadedFiles[0]?.id})`
+        `Spring ${documentId}: QR code uploaded successfully (file id: ${uploadedFiles[0]?.id})`,
       );
     } catch (error) {
       // Log the error but don't throw - let the Spring creation succeed
       // even if QR code generation fails
       strapi.log.error(
         `Spring ${documentId}: Failed to generate/upload QR code`,
-        error
+        error,
       );
     } finally {
       // Clean up temp file

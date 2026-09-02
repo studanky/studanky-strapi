@@ -59,10 +59,11 @@ so the value you scan in Phase 2 is the same key you use everywhere here.
 
 ### Localization (i18n)
 
-`name` and `description` are **localized**; `lat`, `lng`, `current_status` and all
-report fields are **not**. Request a language with `?locale=cs` (or `en`, …). If
-omitted, the server's **default locale** is used. The map endpoint always serves
-the default locale (see [§3.1](#31-get-apispringsmap)).
+`name` is the canonical official name and is **not localized**. `description` is
+localized; `lat`, `lng`, `current_status` and all report fields are not. Request
+a preferred language with `?locale=en-AU` on map, search, detail and preview.
+All four use document-level fallback: exact/parent tag → configured variants of
+the same language → dynamic default → immutable document source locale.
 
 ### Content type & errors
 
@@ -96,8 +97,8 @@ This API mixes **two** response shapes. Don't assume one:
 | Field | Type | Notes |
 |---|---|---|
 | `documentId` | string | **stable id**, used in URLs & QR codes |
-| `name` | string | localized |
-| `name_search` | string | private/internal; localized normalized copy of `name` for accent-insensitive search |
+| `name` | string | canonical official name; not localized |
+| `name_search` | string | private/internal; non-localized normalized copy of `name` for accent-insensitive search |
 | `description` | text \| null | localized |
 | `lat`, `lng` | number | WGS‑84 decimal degrees (not localized) |
 | `current_status` | enum | `is_flowing` \| `is_not_flowing` \| `unknown` — **denormalized** cache of the latest report (see [§4](#4-client-side-logic)) |
@@ -154,14 +155,15 @@ One status record for a spring (from ČHMÚ in the MVP; from users in Phase 2).
 ### 3.1 `GET /api/springs/map`
 
 The hot map path. Returns the **minimal** marker payload for every spring inside
-a bounding box — no history, no private data. Serves **published, default‑locale**
-rows.
+a bounding box — no history, no private data. It selects one complete published
+locale row per `documentId` with document-level fallback.
 
 **Query**
 
 | Param | Required | Format | Example |
 |---|---|---|---|
 | `bbox` | yes | `minLng,minLat,maxLng,maxLat` | `14.2,49.9,14.6,50.2` |
+| `locale` | no | Flutter language tag | `en-AU` |
 
 Missing or non‑numeric `bbox` → **`400`**. An empty box returns `{ "data": [] }`.
 
@@ -176,7 +178,8 @@ Missing or non‑numeric `bbox` → **`400`**. An empty box returns `{ "data": [
       "lat": 50.18,
       "lng": 17.05,
       "current_status": "is_flowing",
-      "status_updated_at": "2026-05-31T05:00:00.000Z"
+      "status_updated_at": "2026-05-31T05:00:00.000Z",
+      "locale": "en-US"
     }
   ]
 }
@@ -195,7 +198,8 @@ Missing or non‑numeric `bbox` → **`400`**. An empty box returns `{ "data": [
 Name **autocomplete** for the map search box: the user types, picks a result,
 and the client flies the map to its `lat`/`lng`. Returns the **same map‑safe
 fields as `/map`** (so a hit is renderable as a marker immediately) — no history,
-no private data. Serves **published** rows in the requested locale.
+no private data. It searches canonical names across published locale rows,
+deduplicates by `documentId`, and selects one complete variant per document.
 
 **Query**
 
@@ -204,7 +208,7 @@ no private data. Serves **published** rows in the requested locale.
 | `q` | yes | — | search text; **min 2 chars** (else `400`) |
 | `lat`, `lng` | no | — | origin (user GPS or map centre); when both valid → nearest‑first + `distance_m` |
 | `limit` | no | `10` | clamped to **50** |
-| `locale` | no | i18n default | which localized `name` to search / return |
+| `locale` | no | i18n default | Flutter `toLanguageTag()`, e.g. `en-AU` |
 
 Match is **case‑insensitive and accent‑insensitive** and partial (e.g. `ostruzna`
 matches `Ostružná`). With a valid `lat`/`lng` origin, results are ordered
@@ -224,6 +228,7 @@ without an origin they are alphabetical by `name`. Broad queries are capped at
       "lng": 17.05,
       "current_status": "is_flowing",
       "status_updated_at": "2026-05-31T05:00:00.000Z",
+      "locale": "en-US",
       "distance_m": 2310
     }
   ]
@@ -244,6 +249,14 @@ the detail screen header (name, description, photo, owner, coordinates).
 ```
 GET /api/springs/k9f2a7b3c1d0e8?populate[photo]=true&populate[owner]=true&locale=cs
 ```
+
+The controller preserves Strapi's core validation, sanitization, `fields`,
+`populate`, `status`, and `{ data, meta }` response while adding document-level
+locale fallback: exact configured tag, less-specific/base tag, configured
+same-language variants, current default, then document source locale.
+`data.locale` is the variant actually served. If the
+requested variant exists with `description: null`, it is returned as-is; there
+is no field-level description fallback.
 
 **Response 200** (standard Strapi shape)
 
@@ -336,13 +349,16 @@ shows the raw `status_updated_at`).
 
 | Param | Required | Default | Notes |
 |---|---|---|---|
-| `locale` | no | i18n default | preferred language for `name` / `description` (falls back — see below) |
+| `locale` | no | i18n default | preferred language for `description` (falls back — see below) |
 
-**Locale fallback**: a shared link must not die on language. The requested
-`locale` is tried first, then the **default locale** if it misses (unsupported
-locale, or the spring not yet published in that language). A **`404`** means the
-spring is missing/unpublished in the default locale too. The response echoes the
-**served** `locale`, which may differ from the requested one after a fallback.
+**Locale fallback**: a shared link must not die on language. An exact configured
+`locale` is tried first, then its configured parents/base and other configured
+variants of the same language (for example `en-AU → en → en-US`), then the
+**dynamic default locale** and immutable document source locale. Unsupported
+codes are never queried. A **`404`** means the spring is missing/unpublished in
+every candidate locale. The response echoes the **served** `locale`, which may
+differ from the requested one after a fallback. Fallback is document-level: an
+existing localization with `description: null` is returned without falling back.
 
 **Field optionality mirrors the Spring schema**: `name`, `lat`, `lng`,
 `current_status` and `locale` are **required** (always present);
@@ -417,7 +433,9 @@ The values shown are illustrative — read the live ranges, never hardcode them.
 Manually triggers the ČHMÚ import (same logic as the nightly **03:30 Europe/Prague**
 cron). **Requires an admin API token**; not part of the client flow. Documented
 here only so you don't accidentally call it. Returns import stats
-(`{ data: { stations, created, updated, reports, … } }`).
+(`{ data: { stations, default_locale, sync_locale, created, updated, reports, … } }`).
+`sync_locale` is always `cs`; changing Strapi's `default_locale` does not change
+the Czech source variant written by this operation.
 
 ---
 
@@ -497,8 +515,8 @@ concern; the API exposes no potability field by design.
 
 | Spec feature | Endpoint(s) | Client work |
 |---|---|---|
-| Map of springs in viewport, clustering | `GET /springs/map?bbox=` | client‑side clustering, re‑query on pan/zoom |
-| Search box → fly map to a spring | `GET /springs/search?q=&lat=&lng=` | accent‑insensitive; nearest‑first with origin |
+| Map of springs in viewport, clustering | `GET /springs/map?bbox=&locale=` | client‑side clustering, pass `toLanguageTag()`, re‑query on pan/zoom |
+| Search box → fly map to a spring | `GET /springs/search?q=&lat=&lng=&locale=` | pass `toLanguageTag()`; nearest‑first with origin |
 | Three‑state icon (teče/neteče/stale) | `…/map` + `GET /platform-config` | compute stale via threshold ([§4.1](#41-three-state-icon-teče--neteče--stale)) |
 | Spring detail (name, description, photo) | `GET /springs/:documentId?populate=…` | render header |
 | Report history, lazy loading | `GET /springs/:documentId/reports?page=` | infinite scroll on `pageCount` |
@@ -506,7 +524,7 @@ concern; the API exposes no potability field by design.
 | Concrete age of last record | any of the above | format `status_updated_at` / `reported_at` |
 | Measured l/s as confirming value | `…/reports` (`flow_rate_lps`) | show beside 1–5 scale |
 | Dynamic freshness threshold & flow table | `GET /platform-config?populate=flow_scale_ranges` | cache, feed into [§4](#4-client-side-logic) |
-| Multi‑language (CZ first, EU later) | `?locale=cs` on detail/config | pass device locale |
+| Multi‑language Spring reads | `?locale=en-AU` on map/search/detail | pass `toLanguageTag()`; inspect served `locale` where present |
 | Open in external maps app | — (client only) | deeplink from `lat`/`lng` |
 | Report submission (QR, offline queue) | **Phase 2** | see [§7](#7-phase-2--report-submission-not-yet-available) |
 
@@ -553,9 +571,9 @@ is live.**
 ## 8. Quick reference
 
 ```text
-GET  /api/springs/map?bbox=minLng,minLat,maxLng,maxLat        → { data: [marker] }            public
-GET  /api/springs/search?q=ostr&lat=&lng=&limit=10&locale=cs  → { data: [marker(+distance_m)] } public
-GET  /api/springs/:documentId?populate[photo]=true&locale=cs  → { data: spring, meta }         public*
+GET  /api/springs/map?bbox=minLng,minLat,maxLng,maxLat&locale=en-AU → { data: [marker] }       public
+GET  /api/springs/search?q=ostr&lat=&lng=&limit=10&locale=en-AU     → { data: [marker(+distance_m)] } public
+GET  /api/springs/:documentId?populate[photo]=true&locale=en-AU     → { data: spring, meta }    public*
 GET  /api/springs/:documentId/reports?page=1&pageSize=20      → { data: [report], meta }       public
 GET  /api/springs/:documentId/preview?locale=cs               → { data: preview }              public (web)
 GET  /api/platform-config?populate[flow_scale_ranges]=true    → { data: config, meta }         public*
