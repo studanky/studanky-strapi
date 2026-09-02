@@ -1,54 +1,42 @@
 # Status Denormalization
 
-The map must be cheap to read, so each Spring caches its current status instead
-of the map endpoint scanning report history. This cache is computed on write.
+Spring stores a cached representation of its newest Report so map and search
+queries do not scan report history.
 
-## Cached fields (on Spring)
+## Cached fields
 
-| Field | Meaning |
+| Spring field | Source |
 |---|---|
-| `current_status` | `is_flowing` / `is_not_flowing` / `unknown` |
-| `status_updated_at` | timestamp of the report that set the status |
-| `last_flow_scale` | last flow strength on the shared 1–5 scale (nullable) |
-| `last_flow_rate_lps` | last measured discharge in l/s (nullable) |
+| `current_status` | `is_flowing` mapped to `is_flowing` or `is_not_flowing` |
+| `status_updated_at` | `reported_at` |
+| `last_flow_scale` | `flow_scale` |
+| `last_flow_rate_lps` | `flow_rate_lps` |
 
-## `refreshLatest(springDocumentId)` — single source of truth
+## `refreshLatest(documentId)`
 
-**Location:** `src/api/spring/services/spring.ts`
+`src/api/spring/services/spring.ts` is the single writer for these cached
+fields. The method:
 
-This service method is the **only** place that writes the cached fields
-(invariant). It:
+1. loads the newest Report by `reported_at`;
+2. derives the four cached values;
+3. performs one Query Engine `updateMany` across all physical Spring rows with
+   the same `updatedAt` timestamp.
 
-1. Finds the spring's **newest** report (`order by reported_at desc, limit 1`) —
-   *newest-wins*.
-2. Derives `current_status` from `is_flowing` and copies `flow_scale` /
-   `flow_rate_lps` / `reported_at`.
-3. Writes the **draft and published rows together** in one
-   `strapi.db.query().updateMany({ where: { documentId } })` with the **same
-   `updatedAt`** (Spring has Draft & Publish). Because both rows end up identical,
-   the entry stays **"Published"** in the admin (no spurious "Modified" badge),
-   the map (published) sees the status, and bypassing the Document Service means
-   unrelated uncommitted draft edits to *other* fields are preserved and never
-   auto-published.
+Spring uses localization and Draft & Publish. Updating every physical row keeps
+draft and published status data aligned while preserving unrelated draft-only
+edits. The raw query also bypasses the Admin Panel Document Service scope.
 
-It is idempotent (always recomputes from the latest report) and safe to call
-repeatedly. Callers: [ČHMÚ sync](./chmu-sync.md) and (Phase 2) report submit.
+The method is idempotent and returns without writing when the Spring has no
+reports. Its current caller is the ČHMÚ sync immediately after a Report is
+created.
 
-> **Why a service, not a lifecycle hook.** The previous `report.afterCreate`
-> hook that did this was removed. Hooks don't fire on `db.query()` / bulk writes
-> and run implicitly, which makes denormalization non-deterministic. Logic lives
-> in the service, triggered explicitly by the sync (and, later, submit). If
-> admin-created reports ever need to propagate, a thin hook that *only calls*
-> `refreshLatest` can be added without moving logic back into the hook.
+## Flow scale
 
-## Flow scale {#flow-scale}
+`platform-config.flowScaleFromLps(lps)` reads `flow_scale_ranges` from the
+Platform Config single type and delegates interval selection to the pure
+`pickFlowScale` helper.
 
-`flow_scale` (1–5) is derived from a measured `flow_rate_lps` by
-`flowScaleFromLps(lps)` on the **platform-config** service
-(`src/api/platform-config/services/platform-config.ts`). It reads the
-`flow_scale_ranges` configured in the Platform Config single type and returns the
-`scale` whose `[min_lps, max_lps]` contains the value, or `null` when there is no
-config / no matching range. A `null` scale is fine — `is_flowing` still works.
-
-> Configure `flow_scale_ranges` in the admin once the real l/s distribution is
-> known (návrh §10). Until then `flow_scale` stays `null`.
+Ranges are inclusive at both ends. The first matching configured range wins.
+The result is `null` when the input is missing or invalid, configuration is
+absent, or no range matches. A null scale does not prevent `is_flowing` or
+`flow_rate_lps` from being stored.

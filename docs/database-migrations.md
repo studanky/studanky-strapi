@@ -1,12 +1,22 @@
 # Database Indexes & Migrations
 
-Indexes that the Content-Type Builder cannot express are created idempotently
-during Strapi bootstrap, after Strapi has synchronized the content-type schema.
-This matters for fresh databases: Strapi runs `database/migrations/` before the
-`springs` / `reports` tables exist, so index creation cannot safely live only in
-a migration file.
+Database migrations perform release-specific data transformations before schema
+synchronization. Idempotent bootstrap helpers create application indexes and
+repair derived search data after Strapi has synchronized the content-type
+schema. This split is necessary because a fresh database does not yet contain
+the application tables when `database/migrations/` runs.
 
-**Runtime hook:** `src/index.ts` → `ensureDbIndexes()`
+`src/index.ts` invokes three helpers during bootstrap:
+
+- `ensureDbIndexes()` creates portable indexes when their tables and columns
+  exist;
+- `ensureSpringSearchNames()` repairs missing or stale `name_search` values;
+- `ensureSpringSearchIndexes()` attempts to enable PostgreSQL `pg_trgm` and
+  create a partial GIN trigram index for `name_search`.
+
+The trigram optimization is PostgreSQL-only. Failure to create its extension or
+index is logged as a warning so the application can still start with functional,
+but potentially slower, search.
 
 **Compatibility migration:** `database/migrations/2026.05.31T00.00.00.spring-report-indexes.js`
 is kept as a safe no-op for migration-history stability.
@@ -104,16 +114,17 @@ ORDER BY document_id;
 
 Strapi does not support `down()` migrations. Back up SQLite/PostgreSQL before
 deployment; rollback is a database restore plus the previous application
-version. See the [localization deployment runbook](./localization.md#backend-150-deployment).
+version. See the [localization runbook](./localization.md).
 
-| Table                    | Index                            | Type       | Purpose                                                 |
-| ------------------------ | -------------------------------- | ---------- | ------------------------------------------------------- |
-| `springs`                | `(external_source, external_id)` | index      | fast ČHMÚ pairing lookup                                |
-| `springs`                | `(lat, lng)`                     | index      | map bbox query                                          |
-| `springs`                | `(status_updated_at)`            | index      | freshness / sorting                                     |
-| `reports`                | `(client_report_id)`             | **UNIQUE** | offline-queue idempotence                               |
-| `reports`                | `(reported_at)`                  | index      | history sorting                                         |
-| `newsletter_subscribers` | `(email_normalized)`             | **UNIQUE** | newsletter subscribe idempotence / duplicate protection |
+| Table | Index | Type | Managed by | Purpose |
+|---|---|---|---|---|
+| `springs` | `(external_source, external_id)` | index | `ensureDbIndexes` | ČHMÚ pairing lookup |
+| `springs` | `(lat, lng)` | index | `ensureDbIndexes` | map bounding-box query |
+| `springs` | `(status_updated_at)` | index | `ensureDbIndexes` | status sorting and freshness queries |
+| `springs` | `name_search gin_trgm_ops WHERE name_search IS NOT NULL` | PostgreSQL GIN | `ensureSpringSearchIndexes` | partial accent-normalized name search |
+| `reports` | `(client_report_id)` | **UNIQUE** | `ensureDbIndexes` | reserved idempotency key |
+| `reports` | `(reported_at)` | index | `ensureDbIndexes` | history sorting |
+| `newsletter_subscribers` | `(email_normalized)` | **UNIQUE** | `ensureDbIndexes` | subscribe idempotence and duplicate protection |
 
 ## Why springs pairing is NOT a unique index
 
@@ -133,8 +144,9 @@ the application layer.
 ## Why reports `client_report_id` IS a unique index
 
 Report has Draft & Publish **disabled** → one row per document, so a DB UNIQUE is
-safe and gives a hard idempotence guarantee for the offline submit queue. The
-index permits multiple `NULL`s (ČHMÚ reports carry no `client_report_id`).
+safe and provides a hard uniqueness guarantee for the reserved idempotency key.
+The index permits multiple `NULL`s; current ČHMÚ reports do not set
+`client_report_id`.
 
 ## `report.spring`
 

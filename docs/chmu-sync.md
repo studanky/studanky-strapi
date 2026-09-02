@@ -1,152 +1,140 @@
 # ČHMÚ Sync
 
-Imports spring discharge data from the ČHMÚ groundwater Open Data and turns it
-into canonical Spring + Report records. ČHMÚ is the **first data source adapter**,
-not the model definition — its specifics stay isolated in the adapter; the rest
-of the backend only ever sees the canonical model.
+The ČHMÚ integration imports spring station metadata and discharge observations
+into the canonical Spring and Report models.
 
-> Source format reference: [`chmu_groundwater_api_documentation.md`](./chmu_groundwater_api_documentation.md) (branch `now/`).
+## Source contract used by this project
+
+ČHMÚ groundwater Open Data is a static HTTPS file tree rooted at:
+
+```text
+https://opendata.chmi.cz/hydrology/groundwater
+```
+
+Only these resources and fields are consumed:
+
+| Resource | Used data |
+|---|---|
+| `now/metadata/meta1.json` | `DataCollection` rows for which `OBJECT_TYPE` is `spring`; `objID`, `OBJECT_NAME`, `GEOGR1`, `GEOGR2`, and optional `ALTITUDE`. |
+| `now/data/{objID}_D.json` | Newest point from the `YD` / `L_S` time series. |
+| `recent/data/{objID}_D_{YYYYMM}.json` | Current- and previous-month fallback when the `now` file is missing or empty. |
+
+`YD` is daily spring discharge and `L_S` is litres per second. Parsing resolves
+`DataCollection` columns from the `header` and selects time series by identifier
+and unit, never by array position. Other ČHMÚ branches are not used.
 
 ## Components
 
-| Concern                                                 | Location                                               |
-| ------------------------------------------------------- | ------------------------------------------------------ |
-| Source adapter (fetch + parse, no Strapi model)         | `src/api/spring/services/chmu-client.ts`               |
-| Sync orchestration (canonical mapping, upsert, reports) | `src/api/spring/services/spring.ts` → `syncFromChmu()` |
-| Scheduled trigger                                       | `config/cron-tasks.ts` + `config/server.ts` (`cron`)   |
-| Manual trigger (ops)                                    | `POST /api/springs/sync-chmu` → `spring.syncChmu`      |
+| Responsibility | Location |
+|---|---|
+| HTTP fetch and source parsing | `src/api/spring/services/chmu-client.ts` |
+| Canonical mapping and persistence | `src/api/spring/services/spring.ts` → `syncFromChmu()` |
+| Scheduled trigger | `config/cron-tasks.ts` |
+| Cron enablement | `config/server.ts` |
+| Shell trigger | `scripts/ops/sync-chmu.js` |
+| HTTP trigger | `POST /api/springs/sync-chmu` |
 
-## Adapter — `chmu-client.ts`
+The adapter returns neutral `ChmuStation` and `ChmuValue` DTOs and contains no
+Strapi persistence logic. Fetches use a 15-second timeout, two retries with
+backoff, and treat HTTP 404 as missing data.
 
-Pure functions returning neutral DTOs (no Strapi awareness):
+## Synchronization flow
 
-- `listSpringStations()` — GET `now/metadata/meta1.json`, parses the
-  `DataCollection` **positionally** (column index resolved from `header`),
-  filters `OBJECT_TYPE === 'spring'`, returns `{ externalId, name, lat, lng, altitude }[]`.
-- `fetchLatestValue(externalId)` — GET `now/data/{objID}_D.json`, selects the
-  series by **`tsConID === 'YD' && unit === 'L_S'`** (discharge in l/s, never by
-  array order), returns the newest `tsData` point `{ dt, valueLps }`, or `null`.
-- `fetchRecentValue(externalId, yyyymm)` — same, from `recent/data/{objID}_D_{YYYYMM}.json`
-  (monthly file, identical structure). Fallback when `now/` has no file.
-- `recentMonths()` — `[currentYYYYMM, previousYYYYMM]` (UTC) to probe.
+### 1. Station upsert
 
-> **`now/` is incomplete.** Empirically only ~46% of spring objects have a
-> `now/data` file; the rest return 404 even though `recent/data` carries equally
-> fresh last points for them. So the value fetch falls back **now → recent
-> (current month → previous month)**, giving complete coverage. `parseLatestValue`
-> is reused for both (same JSON shape).
+The service requires `cs` to be configured in Strapi i18n. It finds draft
+Springs by `external_source = "chmu"` and `external_id = objID`, then creates or
+updates and publishes the Czech source variant.
 
-Hardening: per-request timeout (`AbortController`, 15 s) + retry (2×) with
-backoff; HTTP `404` → `null` (object file may not exist); empty/missing series → `null`.
+New documents receive `source_locale = "cs"` and `current_status = "unknown"`.
+Existing ČHMÚ documents must have the same source locale and a Czech draft.
 
-## Sync — `syncFromChmu()`
+After publishing Czech, the sync copies only this source-owned scalar allowlist
+to every existing physical locale row:
 
-Maps ČHMÚ → canonical (`external_source = 'chmu'`, `external_id = objID`) and
-runs in three phases:
+- `name`
+- `name_search`
+- `lat`
+- `lng`
+- `external_source`
+- `external_id`
 
-1. **Upsert stations** (sequential, SQLite-friendly). Looked up by
-   `(external_source, external_id)` across localized Spring rows. Each station is
-   created/updated and published only in the **Czech source locale (`cs`)**,
-   regardless of the current Strapi default locale. The sync fails before
-   downloading ČHMÚ data when `cs` is not configured. New documents store the
-   immutable private `source_locale = 'cs'`; existing ČHMÚ documents must have
-   that same source value or the station is rejected as inconsistent. After the
-   Czech publish, the sync explicitly copies only its source-owned scalar
-   allowlist (`name`, `name_search`, coordinates, `external_source`,
-   `external_id`) to every physical draft/published row of the document. This is
-   required because Strapi's propagation of non-localized fields does not cover
-   all publication states. Existing translations are never created or
-   published, their publication state stays unchanged, and their localized
-   `description` is never written. New springs start `current_status =
-'unknown'`. If an existing document lacks a Czech draft, that station is
-   skipped and `errors` is incremented.
-2. **Fetch latest values** with bounded concurrency (limit 8): `now/` first,
-   then `recent/` (current → previous month) when `now/` has no file. One
-   failure never aborts the run (`try/catch` per object).
-3. **Append report when newer.** A Report (`source_type = 'chmu'`,
-   `is_flowing = valueLps > 0`, `flow_rate_lps`, `flow_scale` via
-   [`flowScaleFromLps`](./denormalization.md#flow-scale), `reported_at = dt`) is
-   created only if `dt` is strictly newer than the spring's
-   `status_updated_at`, then [`refreshLatest`](./denormalization.md) denormalizes
-   the cached status. → idempotent across daily runs (ČHMÚ updates only some objects).
+It does not create translations, modify `description`, change another locale's
+publication state, or copy cached status fields.
 
-ČHMÚ reports leave `has_odor` / `water_clarity` / `device_id` / `client_report_id`
-as `null` (sensor data has no such fields; sync idempotence is the `dt` check, not
-the offline-queue id).
+### 2. Value fetch
 
-`source_type` is the public data-origin flag. New ČHMÚ records are always written
-as `chmu`; community/client-created records are written through the Report create
-path as `user`.
+Values are fetched with concurrency 8. The service tries the `now` file first,
+then the current and previous `recent` monthly files. Each station is isolated
+so one failure does not abort the complete run.
 
-### Uniqueness note
+### 3. Report append and denormalization
 
-`(external_source, external_id)` is a **non-unique** DB index (Spring has Draft &
-Publish → draft + published rows share the same `external_id`, so a naive DB
-UNIQUE would reject the published row). Pairing uniqueness is enforced by the
-phase-1 `findFirst`-before-`create` upsert. See [Database & Migrations](./database-migrations.md).
+A new Report is created only when its `dt` is strictly newer than the Spring's
+cached `status_updated_at`. The report contains:
 
-## Result / observability
+- `source_type = "chmu"`
+- `is_flowing = valueLps > 0`
+- `flow_rate_lps = valueLps`
+- `flow_scale` resolved from Platform Config
+- `reported_at = dt`
+- the Spring relation
 
-`syncFromChmu()` returns and logs a summary:
+ČHMÚ reports leave fields unsupported by the source unset. After creation,
+`spring.refreshLatest(documentId)` updates the Spring cache. The timestamp check
+makes repeated syncs idempotent for unchanged source data.
+
+## Pairing index
+
+`(external_source, external_id)` has a non-unique database index. A localized
+Draft & Publish Spring has several physical rows with the same source pair, so a
+database unique constraint would reject valid publication and localization
+rows. The sync locates an existing draft before creating a document.
+
+See [Database Indexes & Migrations](./database-migrations.md).
+
+## Result and logging
+
+The service logs and returns:
 
 ```json
 {
   "stations": 85,
   "locales": ["cs", "en"],
-  "default_locale": "en",
+  "default_locale": "cs",
   "sync_locale": "cs",
-  "created": 85,
-  "updated": 0,
-  "localized_created": 85,
-  "localized_updated": 0,
-  "reports": 85,
-  "recent": 46,
-  "skipped": 0,
+  "created": 0,
+  "updated": 85,
+  "localized_created": 0,
+  "localized_updated": 85,
+  "reports": 12,
+  "recent": 40,
+  "skipped": 73,
   "errors": 0
 }
 ```
 
-All pre-1.5 stats keys remain present. `locales` still lists every configured
-locale. `default_locale` reports the current Strapi read default, while
-`sync_locale` identifies the variant written by ČHMÚ and is always `cs`.
-`localized_created` / `localized_updated` now count create/update operations on
-the Czech variant, not operations multiplied by the number of locales.
-`recent` = values served by the `recent/` fallback (no `now/` file). `skipped` =
-stations with no value anywhere, or whose `dt` is not newer than the cached one.
+Counts are illustrative. `recent` counts values obtained through the monthly
+fallback. `skipped` counts missing or non-newer observations. The shell command
+exits non-zero when `errors` is greater than zero.
 
-## Scheduling
+## Scheduling and manual execution
 
-`config/cron-tasks.ts` only **triggers** the service (no logic in cron):
+The cron runs daily at `03:30` in `Europe/Prague` and is enabled through
+`CRON_ENABLED` (default `true`). Disable it in environments that must not import
+source data.
 
-```ts
-chmuSync: { task: ({ strapi }) => strapi.service('api::spring.spring').syncFromChmu(),
-            options: { rule: '30 3 * * *', tz: 'Europe/Prague' } }
-```
-
-Enabled in `config/server.ts` via `cron.enabled = env.bool('CRON_ENABLED', true)`.
-Set `CRON_ENABLED=false` to disable (e.g. local dev).
-
-## Manual run
-
-Preferred internal run (no HTTP, no API token):
+Preferred shell execution:
 
 ```bash
 npm run sync:chmu
 ```
 
-The script does not choose or mutate the global default. It loads Strapi,
-verifies that `cs` is configured, and upserts/publishes only the Czech Spring
-variant. Existing variants receive only the canonical non-localized scalar
-allowlist described above.
+The authenticated HTTP alternative is:
 
-HTTP ops endpoint:
+```http
+POST /api/springs/sync-chmu
+```
 
-`POST /api/springs/sync-chmu` (authenticated — call with an admin API token).
-Returns the same stats object. Keep this for remote automation where a shell on
-the Strapi host/container is not available.
-
-Changing the global default locale does not change `sync_locale`. Follow the
-[default-locale runbook](./localization.md#changing-the-global-default-locale).
-Map/search perform per-document fallback and therefore keep newly imported
-Czech-only Springs visible through their `source_locale = cs`, even after the
-global default changes.
+Both entrypoints call the same service. Neither changes the global default
+locale; ČHMÚ always writes the configured Czech source variant.
