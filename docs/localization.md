@@ -3,13 +3,13 @@
 Spring is an i18n content type, but only linguistic editorial content is
 localized.
 
-| Field group | Localized | Ownership |
-|---|---:|---|
-| `description` | yes | Editors and translations |
-| `name` | no | Canonical official name |
-| `name_search` | no | Private normalized search value |
-| `source_locale` | no | Private immutable source language |
-| coordinates, status, source identifiers, relations, and media | no | Shared document data |
+| Field group                                                   | Localized | Ownership                         |
+| ------------------------------------------------------------- | --------: | --------------------------------- |
+| `description`                                                 |       yes | Editors and translations          |
+| `name`                                                        |        no | Canonical official name           |
+| `name_search`                                                 |        no | Private normalized search value   |
+| `source_locale`                                               |        no | Private immutable source language |
+| coordinates, status, source identifiers, relations, and media |        no | Shared document data              |
 
 Editors use the normal Content Manager locale switcher to edit `description`.
 Content-type structure is deployed from the committed schema and must not be
@@ -17,8 +17,9 @@ changed only in a production Admin Panel.
 
 ## Read negotiation
 
-Map, search, detail, and preview accept an optional locale tag and resolve one
-complete Spring variant in this order:
+Map, search, detail, and preview require a BCP 47 locale tag and resolve one
+complete Spring variant in this order. Base-language tags such as `en` and
+regional tags such as `en-US` are both accepted:
 
 1. exact configured tag;
 2. configured less-specific tags, including script and base language;
@@ -26,8 +27,8 @@ complete Spring variant in this order:
 4. current Strapi default locale;
 5. the document's `source_locale`.
 
-Tags are canonicalized with `Intl.getCanonicalLocales`; underscore input is
-normalized to hyphenated form. `config/locale-fallbacks.ts` defines preferred
+Tags are canonicalized with `Intl.getCanonicalLocales`. Missing, invalid, or
+underscore-separated tags are rejected with `400`. `config/locale-fallbacks.ts` defines preferred
 variants where language-only fallback would otherwise be ambiguous. Remaining
 same-language variants use stable canonical ordering.
 
@@ -36,9 +37,10 @@ valid result and does not borrow a description from another locale. Unsupported
 tags are not passed to the Document Service.
 
 Map and search query published physical rows once, group by `documentId`, and
-select a single whole row. Invalid or missing source metadata is logged in a
-bounded aggregate without hiding content that is available through the valid
-requested/default portion of the chain.
+select a single whole row. Invalid, missing, inconsistent, or unconfigured source
+metadata is logged in a bounded aggregate. It disables the source fallback for
+the affected document but does not hide a row available through the valid
+requested/default chain.
 
 The generic core Spring collection route uses native Strapi i18n behavior. The
 custom fallback policy applies to map, search, overridden detail, and preview.
@@ -71,8 +73,8 @@ Treat the default-locale change as an operational data change:
 3. audit that every Spring has one valid `source_locale` and a published source
    variant;
 4. prepare and publish the required real translations;
-5. smoke-test map, search, detail, and preview with exact, regional,
-   unsupported, and omitted locale values;
+5. smoke-test map, search, detail, and preview with exact, regional, unsupported,
+   missing, underscore-separated, and syntactically invalid locale values;
 6. change the default under Settings → Internationalization;
 7. run one manual sync and verify `default_locale`, `sync_locale`, and public
    fallback behavior;

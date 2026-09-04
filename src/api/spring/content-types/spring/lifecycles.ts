@@ -14,11 +14,7 @@ const SPRING_UID = "api::spring.spring";
 const CHMU_SOURCE_LOCALE = "cs";
 
 const syncNameSearch = (data: Record<string, unknown>) => {
-  const attributes = strapi.contentTypes[SPRING_UID]?.attributes as
-    | Record<string, unknown>
-    | undefined;
-
-  if (typeof data.name === "string" && attributes?.["name_search"]) {
+  if (typeof data.name === "string") {
     data.name_search = normalizeSearchText(data.name);
   }
 };
@@ -156,39 +152,16 @@ const preventSourceLocaleChange = async (event: {
       })) as { source_locale?: string | null } | null)
     : null;
 
-  // Data transfer and an old-version rollback can leave legacy rows with NULL.
-  // A non-localized-field sync may then submit the key as `source_locale: null`
-  // during an unrelated Content Manager edit. Do not turn that no-op into a
-  // 500; leave the missing value untouched so the data can be repaired by the
-  // documented audit/backfill procedure.
   if (!existing?.source_locale) {
-    if (
-      data.source_locale == null ||
-      (typeof data.source_locale === "string" && !data.source_locale.trim())
-    ) {
-      delete data.source_locale;
-      return;
-    }
-    data.source_locale = canonicalConfiguredLocale(
-      data.source_locale,
-      configuredByCanonical,
+    throw new errors.ValidationError(
+      "Spring has no persisted source_locale; repair the document before updating it",
     );
-    return;
   }
 
   const persisted = canonicalConfiguredLocale(
     existing.source_locale,
     configuredByCanonical,
   );
-  if (
-    data.source_locale == null ||
-    (typeof data.source_locale === "string" && !data.source_locale.trim())
-  ) {
-    // Never let a stale NULL synchronization erase an established source.
-    data.source_locale = persisted;
-    return;
-  }
-
   const requested = canonicalConfiguredLocale(
     data.source_locale,
     configuredByCanonical,

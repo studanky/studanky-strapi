@@ -1,6 +1,5 @@
 import { describe, it, expect } from "vitest";
 import {
-  findConfiguredLocale,
   indexConfiguredLocales,
   resolveLocaleChain,
 } from "../../src/utils/locale";
@@ -23,27 +22,20 @@ describe("resolveLocaleChain", () => {
     ).toEqual(["cs", "en"]);
   });
 
-  it("normalizes separators and casing while preserving configured codes", () => {
+  it("normalizes casing while preserving configured codes", () => {
     expect(
       resolveLocaleChain({
-        requested: "EN_us",
+        requested: "EN-us",
         defaultLocale: "cs",
         configuredByCanonical,
       }),
     ).toEqual(["en-US", "en", "cs"]);
   });
 
-  it("shares a prebuilt configured index between chain and direct lookups", () => {
-    const regionalIndex = indexConfiguredLocales(["cs", "en_US"]);
-
-    expect(
-      resolveLocaleChain({
-        requested: "EN-us",
-        defaultLocale: "cs",
-        configuredByCanonical: regionalIndex,
-      }),
-    ).toEqual(["en_US", "cs"]);
-    expect(findConfiguredLocale("en-US", regionalIndex)).toBe("en_US");
+  it("rejects configured locale codes that use legacy underscore separators", () => {
+    expect(() => indexConfiguredLocales(["cs", "en_US"])).toThrow(
+      "Strapi i18n locale en_US is invalid",
+    );
   });
 
   it("rejects invalid configured tags while building the shared index", () => {
@@ -67,11 +59,7 @@ describe("resolveLocaleChain", () => {
       resolveLocaleChain({
         requested: "en-AU",
         defaultLocale: "cs",
-        configuredByCanonical: indexConfiguredLocales([
-          "cs",
-          "en-US",
-          "en-GB",
-        ]),
+        configuredByCanonical: indexConfiguredLocales(["cs", "en-US", "en-GB"]),
         preferredVariants: { en: ["en-US", "en-GB"] },
       }),
     ).toEqual(["en-US", "en-GB", "cs"]);
@@ -124,28 +112,14 @@ describe("resolveLocaleChain", () => {
     ).toEqual(["en"]);
   });
 
-  it("falls back to default when no locale is requested", () => {
-    expect(
-      resolveLocaleChain({
-        requested: undefined,
-        defaultLocale: "en",
-        configuredByCanonical,
-      }),
-    ).toEqual(["en"]);
-    expect(
-      resolveLocaleChain({
-        requested: null,
-        defaultLocale: "en",
-        configuredByCanonical,
-      }),
-    ).toEqual(["en"]);
-    expect(
+  it("rejects an empty requested locale", () => {
+    expect(() =>
       resolveLocaleChain({
         requested: "",
         defaultLocale: "en",
         configuredByCanonical,
       }),
-    ).toEqual(["en"]);
+    ).toThrow("is not valid BCP 47");
   });
 
   it("fails instead of querying an unsupported default locale", () => {

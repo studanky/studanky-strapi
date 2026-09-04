@@ -18,8 +18,14 @@ function buildController() {
     documentId: "spring-1",
     locale: "cs",
   }));
+  const preview = vi.fn(async () => ({ documentId: "spring-1", locale: "cs" }));
   const strapi = {
-    service: vi.fn(() => ({ search, findInBbox, findOneWithLocaleFallback })),
+    service: vi.fn(() => ({
+      search,
+      findInBbox,
+      findOneWithLocaleFallback,
+      preview,
+    })),
   };
   const controller = springControllerFactory({ strapi }) as any;
   controller.validateQuery = vi.fn(async () => undefined);
@@ -28,7 +34,13 @@ function buildController() {
   controller.transformResponse = vi.fn((data, meta) =>
     meta === undefined ? { data } : { data, meta },
   );
-  return { controller, search, findInBbox, findOneWithLocaleFallback };
+  return {
+    controller,
+    search,
+    findInBbox,
+    findOneWithLocaleFallback,
+    preview,
+  };
 }
 
 describe("spring controller localization contracts", () => {
@@ -87,5 +99,48 @@ describe("spring controller localization contracts", () => {
     expect(response).toEqual({
       data: { documentId: "spring-1", locale: "cs" },
     });
+  });
+
+  it.each([
+    ["map", { query: { bbox: "13,49,15,51" } }],
+    ["search", { query: { q: "studanka" } }],
+    ["findOne", { params: { id: "spring-1" }, query: {} }],
+    ["preview", { params: { documentId: "spring-1" }, query: {} }],
+  ])("rejects a missing locale on %s", async (action, partialCtx) => {
+    const { controller } = buildController();
+    const badRequest = vi.fn((message) => ({ status: 400, message }));
+    const ctx = { ...partialCtx, badRequest };
+
+    const response = await controller[action](ctx);
+
+    expect(response).toEqual({
+      status: 400,
+      message:
+        'Missing or invalid "locale" query (expected a BCP 47 tag, e.g. "en" or "en-US")',
+    });
+  });
+
+  it("rejects a locale with a legacy underscore separator", async () => {
+    const { controller, findInBbox } = buildController();
+    const badRequest = vi.fn((message) => ({ status: 400, message }));
+    const ctx = {
+      query: { bbox: "13,49,15,51", locale: "en_US" },
+      badRequest,
+    };
+
+    await expect(controller.map(ctx)).resolves.toMatchObject({ status: 400 });
+    expect(findInBbox).not.toHaveBeenCalled();
+  });
+
+  it("canonicalizes locale casing at the HTTP boundary", async () => {
+    const { controller, findInBbox } = buildController();
+    const ctx = {
+      query: { bbox: "13,49,15,51", locale: "EN-us" },
+      badRequest: vi.fn(),
+    };
+
+    await controller.map(ctx);
+
+    expect(findInBbox).toHaveBeenCalledWith("13,49,15,51", "en-US");
   });
 });

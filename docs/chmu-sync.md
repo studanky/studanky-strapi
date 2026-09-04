@@ -13,11 +13,11 @@ https://opendata.chmi.cz/hydrology/groundwater
 
 Only these resources and fields are consumed:
 
-| Resource | Used data |
-|---|---|
-| `now/metadata/meta1.json` | `DataCollection` rows for which `OBJECT_TYPE` is `spring`; `objID`, `OBJECT_NAME`, `GEOGR1`, `GEOGR2`, and optional `ALTITUDE`. |
-| `now/data/{objID}_D.json` | Newest point from the `YD` / `L_S` time series. |
-| `recent/data/{objID}_D_{YYYYMM}.json` | Current- and previous-month fallback when the `now` file is missing or empty. |
+| Resource                              | Used data                                                                                                                       |
+| ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| `now/metadata/meta1.json`             | `DataCollection` rows for which `OBJECT_TYPE` is `spring`; `objID`, `OBJECT_NAME`, `GEOGR1`, `GEOGR2`, and optional `ALTITUDE`. |
+| `now/data/{objID}_D.json`             | Newest point from the `YD` / `L_S` time series.                                                                                 |
+| `recent/data/{objID}_D_{YYYYMM}.json` | Current- and previous-month fallback when the `now` file is missing or empty.                                                   |
 
 `YD` is daily spring discharge and `L_S` is litres per second. Parsing resolves
 `DataCollection` columns from the `header` and selects time series by identifier
@@ -25,14 +25,14 @@ and unit, never by array position. Other ČHMÚ branches are not used.
 
 ## Components
 
-| Responsibility | Location |
-|---|---|
-| HTTP fetch and source parsing | `src/api/spring/services/chmu-client.ts` |
+| Responsibility                    | Location                                               |
+| --------------------------------- | ------------------------------------------------------ |
+| HTTP fetch and source parsing     | `src/api/spring/services/chmu-client.ts`               |
 | Canonical mapping and persistence | `src/api/spring/services/spring.ts` → `syncFromChmu()` |
-| Scheduled trigger | `config/cron-tasks.ts` |
-| Cron enablement | `config/server.ts` |
-| Shell trigger | `scripts/ops/sync-chmu.js` |
-| HTTP trigger | `POST /api/springs/sync-chmu` |
+| Scheduled trigger                 | `config/cron-tasks.ts`                                 |
+| Cron enablement                   | `config/server.ts`                                     |
+| Shell trigger                     | `scripts/ops/sync-chmu.js`                             |
+| HTTP trigger                      | `POST /api/springs/sync-chmu`                          |
 
 The adapter returns neutral `ChmuStation` and `ChmuValue` DTOs and contains no
 Strapi persistence logic. Fetches use a 15-second timeout, two retries with
@@ -58,6 +58,7 @@ to every existing physical locale row:
 - `lng`
 - `external_source`
 - `external_id`
+- `source_locale` (always `cs`)
 
 It does not create translations, modify `description`, change another locale's
 publication state, or copy cached status fields.
@@ -105,8 +106,6 @@ The service logs and returns:
   "sync_locale": "cs",
   "created": 0,
   "updated": 85,
-  "localized_created": 0,
-  "localized_updated": 85,
   "reports": 12,
   "recent": 40,
   "skipped": 73,

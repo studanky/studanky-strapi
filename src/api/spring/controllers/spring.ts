@@ -3,8 +3,15 @@
  */
 
 import { factories } from "@strapi/strapi";
+import { canonicalizeLocaleTag } from "../../../utils/locale";
 
 const SPRING_UID = "api::spring.spring";
+const INVALID_LOCALE_MESSAGE =
+  'Missing or invalid "locale" query (expected a BCP 47 tag, e.g. "en" or "en-US")';
+
+function parseRequiredLocale(value: unknown): string | null {
+  return typeof value === "string" ? canonicalizeLocaleTag(value) : null;
+}
 
 export default factories.createCoreController(SPRING_UID, ({ strapi }) => ({
   /**
@@ -12,12 +19,16 @@ export default factories.createCoreController(SPRING_UID, ({ strapi }) => ({
    * Core-compatible detail response with document-level locale fallback.
    */
   async findOne(ctx) {
-    const documentId = ctx.params.documentId ?? ctx.params.id;
+    const documentId = ctx.params.id;
     await this.validateQuery(ctx);
+    const locale = parseRequiredLocale(ctx.query.locale);
+    if (!locale) {
+      return ctx.badRequest(INVALID_LOCALE_MESSAGE);
+    }
     const sanitizedQuery = await this.sanitizeQuery(ctx);
     const entity = await strapi
       .service(SPRING_UID)
-      .findOneWithLocaleFallback(documentId, sanitizedQuery);
+      .findOneWithLocaleFallback(documentId, { ...sanitizedQuery, locale });
     const sanitizedEntity = await this.sanitizeOutput(entity, ctx);
     return this.transformResponse(sanitizedEntity);
   },
@@ -35,10 +46,14 @@ export default factories.createCoreController(SPRING_UID, ({ strapi }) => ({
         'Missing or invalid "bbox" query (expected "minLng,minLat,maxLng,maxLat")',
       );
     }
+    const requestedLocale = parseRequiredLocale(locale);
+    if (!requestedLocale) {
+      return ctx.badRequest(INVALID_LOCALE_MESSAGE);
+    }
 
     const points = await strapi
       .service(SPRING_UID)
-      .findInBbox(bbox, typeof locale === "string" ? locale : undefined);
+      .findInBbox(bbox, requestedLocale);
     return { data: points };
   },
 
@@ -58,13 +73,17 @@ export default factories.createCoreController(SPRING_UID, ({ strapi }) => ({
         'Missing or too short "q" query (minimum 2 characters)',
       );
     }
+    const requestedLocale = parseRequiredLocale(locale);
+    if (!requestedLocale) {
+      return ctx.badRequest(INVALID_LOCALE_MESSAGE);
+    }
 
     const data = await strapi.service(SPRING_UID).search({
       q,
       lat: lat != null ? Number(lat) : undefined,
       lng: lng != null ? Number(lng) : undefined,
       limit: limit != null ? Number(limit) : undefined,
-      locale: typeof locale === "string" ? locale : undefined,
+      locale: requestedLocale,
     });
 
     return { data };
@@ -98,10 +117,14 @@ export default factories.createCoreController(SPRING_UID, ({ strapi }) => ({
 
     const { documentId } = ctx.params;
     const { locale } = ctx.query;
+    const requestedLocale = parseRequiredLocale(locale);
+    if (!requestedLocale) {
+      return ctx.badRequest(INVALID_LOCALE_MESSAGE);
+    }
 
     const data = await strapi
       .service(SPRING_UID)
-      .preview(documentId, typeof locale === "string" ? locale : undefined);
+      .preview(documentId, requestedLocale);
 
     if (!data) {
       return ctx.notFound("Spring not found");
@@ -115,7 +138,7 @@ export default factories.createCoreController(SPRING_UID, ({ strapi }) => ({
    * Manual trigger for the ČHMÚ sync (ops). Authenticated — call with an admin
    * API token; the scheduled cron uses the same service.
    */
-  async syncChmu(ctx) {
+  async syncChmu() {
     const stats = await strapi.service(SPRING_UID).syncFromChmu();
     return { data: stats };
   },

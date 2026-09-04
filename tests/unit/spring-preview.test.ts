@@ -78,7 +78,7 @@ function buildService(opts: {
   const service = springServiceFactory({ strapi }) as unknown as {
     preview: (
       documentId: string,
-      locale?: string,
+      locale: string,
     ) => Promise<Record<string, unknown> | null>;
   };
   return { service, findOne, log };
@@ -177,7 +177,7 @@ describe("spring.preview — service contract", () => {
     expect(res?.locale).toBe("en");
   });
 
-  it("logs a missing source and still serves preview from the default locale", async () => {
+  it("serves a document with a missing source from the default locale", async () => {
     const { service, findOne, log } = buildService({
       defaultLocale: "en",
       configured: ["cs", "en"],
@@ -185,26 +185,29 @@ describe("spring.preview — service contract", () => {
       findOne: async ({ locale }) => (locale === "en" ? sampleRow() : null),
     });
 
-    const res = await service.preview("doc1", "de");
-
-    expect(res?.locale).toBe("en");
+    await expect(service.preview("doc1", "de")).resolves.toMatchObject({
+      documentId: "doc1",
+      locale: "en",
+    });
     expect(findOne).toHaveBeenCalledTimes(1);
     expect(log.error).toHaveBeenCalledWith(
       expect.stringContaining("has no source_locale"),
     );
   });
 
-  it("logs an unconfigured source and still serves preview from the default locale", async () => {
-    const { service, log } = buildService({
+  it("serves a document with an unconfigured source from the default locale", async () => {
+    const { service, findOne, log } = buildService({
       defaultLocale: "en",
       configured: ["cs", "en"],
       sourceLocale: "de",
       findOne: async ({ locale }) => (locale === "en" ? sampleRow() : null),
     });
 
-    const res = await service.preview("doc1", "fr");
-
-    expect(res?.locale).toBe("en");
+    await expect(service.preview("doc1", "fr")).resolves.toMatchObject({
+      documentId: "doc1",
+      locale: "en",
+    });
+    expect(findOne).toHaveBeenCalledTimes(1);
     expect(log.error).toHaveBeenCalledWith(
       expect.stringContaining("invalid source_locale"),
     );
@@ -240,7 +243,7 @@ describe("spring.preview — service contract", () => {
       findOne: async () => sampleRow(),
     });
 
-    const res = await service.preview("");
+    const res = await service.preview("", "cs");
 
     expect(res).toBeNull();
     expect(findOne).not.toHaveBeenCalled();

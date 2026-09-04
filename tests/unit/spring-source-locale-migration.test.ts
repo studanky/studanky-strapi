@@ -3,6 +3,8 @@ import knexFactory, { type Knex } from "knex";
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const migration = require("../../database/migrations/2026.08.24T00.00.00.spring-source-locale.js");
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const repairMigration = require("../../database/migrations/2026.09.04T00.00.00.repair-spring-source-locale.js");
 
 const databases: Knex[] = [];
 
@@ -102,5 +104,31 @@ describe("Spring source-locale migration", () => {
   it("is a safe no-op before schema sync on a fresh database", async () => {
     const db = createDatabase();
     await expect(migration.up(db)).resolves.toBeUndefined();
+  });
+
+  it("repairs source metadata written as null after the original migration", async () => {
+    const db = createDatabase();
+    await createSprings(db);
+    await db("springs").insert([
+      {
+        document_id: "chmu",
+        locale: "cs",
+        created_at: "2026-01-01T00:00:00.000Z",
+        external_source: "chmu",
+      },
+      {
+        document_id: "manual",
+        locale: "en",
+        created_at: "2026-01-02T00:00:00.000Z",
+      },
+    ]);
+    await db.schema.alterTable("springs", (table) => {
+      table.string("source_locale");
+    });
+
+    await db.transaction((trx) => repairMigration.up(trx));
+
+    const rows = await db("springs").orderBy("id");
+    expect(rows.map((row) => row.source_locale)).toEqual(["cs", "en"]);
   });
 });

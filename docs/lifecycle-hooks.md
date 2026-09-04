@@ -16,9 +16,9 @@ status propagation lives in the explicit
 - Conflicting, missing, invalid, or unconfigured source values are rejected with
   a Strapi validation error.
 
-`beforeUpdate` prevents changing an established source locale. It tolerates a
-legacy null value carried by an unrelated non-localized field synchronization
-without allowing that null to erase a valid persisted source.
+`beforeUpdate` prevents changing an established source locale. A missing
+persisted value or a null/invalid replacement is rejected as an invariant
+violation; repair imported data before editing the document.
 
 The field is not schema-level `required` because Strapi validates required
 creation fields before the database lifecycle can derive it. Migrations,

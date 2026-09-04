@@ -28,23 +28,26 @@ the standard `{ "data": ..., "meta": ... }` response and require explicit
 
 ## Authentication
 
-| Method and path | Access |
-|---|---|
-| `GET /api/springs/map` | Public (`auth: false`) |
-| `GET /api/springs/search` | Public (`auth: false`) |
-| `GET /api/springs/:documentId/reports` | Public (`auth: false`) |
-| `GET /api/springs/:documentId/preview` | Public (`auth: false`) |
-| `POST /api/newsletter/subscribe` | Public (`auth: false`) |
-| `GET /api/springs/:documentId` | Core route; enable `spring.findOne` for the Public role if public access is required |
-| `GET /api/platform-config` | Core route; enable `platform-config.find` for the Public role if public access is required |
-| `POST /api/springs/sync-chmu` | Authenticated operations route |
+| Method and path                        | Access                                                                                     |
+| -------------------------------------- | ------------------------------------------------------------------------------------------ |
+| `GET /api/springs/map`                 | Public (`auth: false`)                                                                     |
+| `GET /api/springs/search`              | Public (`auth: false`)                                                                     |
+| `GET /api/springs/:documentId/reports` | Public (`auth: false`)                                                                     |
+| `GET /api/springs/:documentId/preview` | Public (`auth: false`)                                                                     |
+| `POST /api/newsletter/subscribe`       | Public (`auth: false`)                                                                     |
+| `GET /api/springs/:documentId`         | Core route; enable `spring.findOne` for the Public role if public access is required       |
+| `GET /api/platform-config`             | Core route; enable `platform-config.find` for the Public role if public access is required |
+| `POST /api/springs/sync-chmu`          | Authenticated operations route                                                             |
 
 There is no Report router and therefore no `/api/reports` content API surface.
 
 ## Localization
 
-Spring map, search, detail, and preview accept an optional BCP 47-style `locale`
-query parameter. Resolution tries configured candidates in this order:
+Spring map, search, detail, and preview require a BCP 47 `locale` query
+parameter. Both a base language such as `en` and a hyphenated regional tag such
+as `en-US` are valid. Missing, empty, syntactically invalid, and
+underscore-separated values return `400`. Valid tags are canonicalized and
+resolution tries configured candidates in this order:
 
 1. the exact requested tag and its less-specific configured forms;
 2. configured variants of the requested language;
@@ -54,7 +57,8 @@ query parameter. Resolution tries configured candidates in this order:
 `config/locale-fallbacks.ts` supplies preferred variants for ambiguous language
 fallback. A selected localization is returned as a whole document; null fields
 do not trigger field-level fallback. Map, search, and preview include the locale
-that was actually served.
+that was actually served. A valid but unconfigured tag is accepted and continues
+through the fallback chain; it is not sent directly to the Document Service.
 
 ## `GET /api/springs/map`
 
@@ -62,10 +66,10 @@ Returns published Spring markers inside a bounding box.
 
 ### Query
 
-| Parameter | Required | Format |
-|---|---:|---|
-| `bbox` | yes | `minLng,minLat,maxLng,maxLat` |
-| `locale` | no | Preferred locale tag |
+| Parameter | Required | Format                                           |
+| --------- | -------: | ------------------------------------------------ |
+| `bbox`    |      yes | `minLng,minLat,maxLng,maxLat`                    |
+| `locale`  |      yes | BCP 47 language tag, for example `en` or `en-US` |
 
 A missing or non-string `bbox` returns `400`. When one of the four parsed values
 is `NaN`, the current service returns an empty `data` array. The implementation
@@ -99,12 +103,12 @@ private canonical `name_search` value.
 
 ### Query
 
-| Parameter | Required | Behavior |
-|---|---:|---|
-| `q` | yes | Trimmed; minimum 2 characters; at most 80 characters are searched. |
-| `lat`, `lng` | no | When both form a valid geographic origin, results include `distance_m` and are ordered nearest-first. |
-| `limit` | no | Defaults to 10 and is clamped to 1–50. |
-| `locale` | no | Preferred locale tag. |
+| Parameter    | Required | Behavior                                                                                              |
+| ------------ | -------: | ----------------------------------------------------------------------------------------------------- |
+| `q`          |      yes | Trimmed; minimum 2 characters; at most 80 characters are searched.                                    |
+| `lat`, `lng` |       no | When both form a valid geographic origin, results include `distance_m` and are ordered nearest-first. |
+| `limit`      |       no | Defaults to 10 and is clamped to 1–50.                                                                |
+| `locale`     |      yes | BCP 47 language tag, for example `en` or `en-US`.                                                     |
 
 Missing or too-short `q` returns `400`. Invalid or incomplete origin coordinates
 are ignored. Without a valid origin, results retain alphabetical query order.
@@ -121,6 +125,9 @@ features. The overridden controller preserves query validation, sanitization,
 `fields`, `populate`, and `status`, while the service adds document-level locale
 fallback. Published content is used unless `status` is explicitly supplied.
 
+The BCP 47 `locale` query parameter is required. Base-language tags and
+language-region tags are accepted.
+
 Example:
 
 ```http
@@ -136,10 +143,10 @@ Returns report history newest-first.
 
 ### Query
 
-| Parameter | Default | Behavior |
-|---|---:|---|
-| `page` | 1 | Clamped to a minimum of 1. |
-| `pageSize` | 20 | Clamped to 1–100. |
+| Parameter  | Default | Behavior                   |
+| ---------- | ------: | -------------------------- |
+| `page`     |       1 | Clamped to a minimum of 1. |
+| `pageSize` |      20 | Clamped to 1–100.          |
 
 ### Response
 
@@ -177,15 +184,20 @@ Only the fields shown above are selected. Capture coordinates, `device_id`, and
 Returns a published teaser representation. It deliberately excludes flow
 strength and report history.
 
-| Parameter | Required | Behavior |
-|---|---:|---|
-| `locale` | no | Preferred locale tag. |
+| Parameter | Required | Behavior                                          |
+| --------- | -------: | ------------------------------------------------- |
+| `locale`  |      yes | BCP 47 language tag, for example `en` or `en-US`. |
 
 Response fields are `documentId`, `name`, `lat`, `lng`, `current_status`,
 `status_updated_at`, `description`, `photo`, and served `locale`. The normalized
 photo object contains `url`, `alternativeText`, `width`, `height`, and
 `thumbnail_url`. Optional values are returned as `null`. A Spring that is not
 published in any fallback locale returns `404`.
+
+Missing or invalid `source_locale` metadata is logged as an application
+invariant violation. It disables only the final source-locale fallback for that
+document; a localization available through the requested/default chain is still
+returned.
 
 ## `GET /api/platform-config`
 
@@ -200,9 +212,7 @@ GET /api/platform-config?populate[flow_scale_ranges]=true
 {
   "data": {
     "freshness_threshold_days": 14,
-    "flow_scale_ranges": [
-      { "scale": 1, "min_lps": 0, "max_lps": 0.1 }
-    ]
+    "flow_scale_ranges": [{ "scale": 1, "min_lps": 0, "max_lps": 0.1 }]
   },
   "meta": {}
 }
@@ -226,15 +236,15 @@ Accepts a top-level JSON object, not the core REST `{ "data": ... }` envelope.
 }
 ```
 
-| Field | Required | Validation |
-|---|---:|---|
-| `email` | yes | Trimmed, simple email validation, maximum 254 characters. |
-| `consent` | yes | Must be exactly `true`. |
-| `source` | no | Trimmed, maximum 80 characters. |
-| `preferredLanguage` | no | Normalized locale tag, maximum 32 characters. |
-| `consentVersion` | no | Trimmed, maximum 80 characters. |
-| `sourceRef` | no | Trimmed, maximum 2048 characters. |
-| `website` | no | Honeypot; a non-empty value returns neutral success without writing. |
+| Field               | Required | Validation                                                           |
+| ------------------- | -------: | -------------------------------------------------------------------- |
+| `email`             |      yes | Trimmed, simple email validation, maximum 254 characters.            |
+| `consent`           |      yes | Must be exactly `true`.                                              |
+| `source`            |       no | Trimmed, maximum 80 characters.                                      |
+| `preferredLanguage` |       no | Normalized locale tag, maximum 32 characters.                        |
+| `consentVersion`    |       no | Trimmed, maximum 80 characters.                                      |
+| `sourceRef`         |       no | Trimmed, maximum 2048 characters.                                    |
+| `website`           |       no | Honeypot; a non-empty value returns neutral success without writing. |
 
 Success and idempotent duplicate submissions return:
 

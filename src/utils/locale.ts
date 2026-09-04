@@ -1,10 +1,8 @@
 /**
  * Shared locale helpers (pure, no Strapi dependency).
  *
- * Flutter's `Locale.toLanguageTag()` uses BCP 47-style hyphenated tags. The
- * underscore replacement below is deliberately only a tolerant compatibility
- * boundary for legacy/non-standard callers (`en_US`); it is not the documented
- * client contract.
+ * Public API callers must use BCP 47-style hyphenated tags, matching Flutter's
+ * `Locale.toLanguageTag()` output.
  */
 
 export type PreferredLocaleVariants = Record<string, string[]>;
@@ -18,7 +16,7 @@ export function canonicalizeLocaleTag(value?: string | null): string | null {
   }
 
   try {
-    return Intl.getCanonicalLocales(value.trim().replace(/_/g, "-"))[0] ?? null;
+    return Intl.getCanonicalLocales(value.trim())[0] ?? null;
   } catch {
     return null;
   }
@@ -70,7 +68,7 @@ function localeLanguage(value: string): string {
  * reused for the entire request and by adjacent metadata resolvers.
  */
 export function resolveLocaleChain(params: {
-  requested?: string | null;
+  requested: string;
   defaultLocale: string;
   configuredByCanonical: ConfiguredLocaleIndex;
   preferredVariants?: PreferredLocaleVariants;
@@ -90,35 +88,39 @@ export function resolveLocaleChain(params: {
   };
 
   const requestedCanonical = canonicalizeLocaleTag(requested);
-  if (requestedCanonical) {
-    const parsed = new Intl.Locale(requestedCanonical);
-    const language = parsed.language;
+  if (!requestedCanonical) {
+    throw new Error(
+      `Requested locale ${String(requested)} is not valid BCP 47`,
+    );
+  }
 
-    // Exact tag first. For a tag with script+region, prefer the script-specific
-    // parent before the bare language (e.g. sr-Latn-RS → sr-Latn → sr).
-    addCanonical(requestedCanonical);
-    if (parsed.script) {
-      addCanonical(canonicalizeLocaleTag(`${language}-${parsed.script}`));
-    }
-    addCanonical(canonicalizeLocaleTag(language));
+  const parsed = new Intl.Locale(requestedCanonical);
+  const language = parsed.language;
 
-    // Business preference resolves ambiguous siblings deterministically. Any
-    // newly configured sibling omitted from the preference list is still used,
-    // in canonical lexical order, so `en-AU` can reach the only `en-US` variant.
-    const preferred = preferredVariants[language] ?? [];
-    for (const locale of preferred) {
-      const canonical = canonicalizeLocaleTag(locale);
-      if (canonical && localeLanguage(canonical) === language) {
-        addCanonical(canonical);
-      }
-    }
+  // Exact tag first. For a tag with script+region, prefer the script-specific
+  // parent before the bare language (e.g. sr-Latn-RS → sr-Latn → sr).
+  addCanonical(requestedCanonical);
+  if (parsed.script) {
+    addCanonical(canonicalizeLocaleTag(`${language}-${parsed.script}`));
+  }
+  addCanonical(canonicalizeLocaleTag(language));
 
-    const siblings = [...configuredByCanonical.keys()]
-      .filter((locale) => localeLanguage(locale) === language)
-      .sort((a, b) => a.localeCompare(b));
-    for (const sibling of siblings) {
-      addCanonical(sibling);
+  // Business preference resolves ambiguous siblings deterministically. Any
+  // newly configured sibling omitted from the preference list is still used,
+  // in canonical lexical order, so `en-AU` can reach the only `en-US` variant.
+  const preferred = preferredVariants[language] ?? [];
+  for (const locale of preferred) {
+    const canonical = canonicalizeLocaleTag(locale);
+    if (canonical && localeLanguage(canonical) === language) {
+      addCanonical(canonical);
     }
+  }
+
+  const siblings = [...configuredByCanonical.keys()]
+    .filter((locale) => localeLanguage(locale) === language)
+    .sort((a, b) => a.localeCompare(b));
+  for (const sibling of siblings) {
+    addCanonical(sibling);
   }
 
   const configuredDefault = findConfiguredLocale(

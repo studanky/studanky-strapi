@@ -42,6 +42,11 @@ relations do not change. Automated SQLite coverage lives in
 `tests/unit/spring-source-locale-migration.test.ts`; rehearse both 1.5.0
 migrations in filename order on PostgreSQL before production.
 
+`database/migrations/2026.09.04T00.00.00.repair-spring-source-locale.js`
+re-applies the same idempotent inference once for deployments where a later
+data import or row rewrite restored `NULL` values after the original migration
+was recorded. Existing valid source metadata is preserved.
+
 ## 1.5.0 canonical Spring name migration
 
 `database/migrations/2026.08.25T00.00.00.canonical-spring-name.js` runs after
@@ -116,15 +121,15 @@ Strapi does not support `down()` migrations. Back up SQLite/PostgreSQL before
 deployment; rollback is a database restore plus the previous application
 version. See the [localization runbook](./localization.md).
 
-| Table | Index | Type | Managed by | Purpose |
-|---|---|---|---|---|
-| `springs` | `(external_source, external_id)` | index | `ensureDbIndexes` | ČHMÚ pairing lookup |
-| `springs` | `(lat, lng)` | index | `ensureDbIndexes` | map bounding-box query |
-| `springs` | `(status_updated_at)` | index | `ensureDbIndexes` | status sorting and freshness queries |
-| `springs` | `name_search gin_trgm_ops WHERE name_search IS NOT NULL` | PostgreSQL GIN | `ensureSpringSearchIndexes` | partial accent-normalized name search |
-| `reports` | `(client_report_id)` | **UNIQUE** | `ensureDbIndexes` | reserved idempotency key |
-| `reports` | `(reported_at)` | index | `ensureDbIndexes` | history sorting |
-| `newsletter_subscribers` | `(email_normalized)` | **UNIQUE** | `ensureDbIndexes` | subscribe idempotence and duplicate protection |
+| Table                    | Index                                                    | Type           | Managed by                  | Purpose                                        |
+| ------------------------ | -------------------------------------------------------- | -------------- | --------------------------- | ---------------------------------------------- |
+| `springs`                | `(external_source, external_id)`                         | index          | `ensureDbIndexes`           | ČHMÚ pairing lookup                            |
+| `springs`                | `(lat, lng)`                                             | index          | `ensureDbIndexes`           | map bounding-box query                         |
+| `springs`                | `(status_updated_at)`                                    | index          | `ensureDbIndexes`           | status sorting and freshness queries           |
+| `springs`                | `name_search gin_trgm_ops WHERE name_search IS NOT NULL` | PostgreSQL GIN | `ensureSpringSearchIndexes` | partial accent-normalized name search          |
+| `reports`                | `(client_report_id)`                                     | **UNIQUE**     | `ensureDbIndexes`           | reserved idempotency key                       |
+| `reports`                | `(reported_at)`                                          | index          | `ensureDbIndexes`           | history sorting                                |
+| `newsletter_subscribers` | `(email_normalized)`                                     | **UNIQUE**     | `ensureDbIndexes`           | subscribe idempotence and duplicate protection |
 
 ## Why springs pairing is NOT a unique index
 

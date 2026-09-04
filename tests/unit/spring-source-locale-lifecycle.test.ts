@@ -20,9 +20,6 @@ function installStrapi(
     (existingSources ?? []).map((source_locale) => ({ source_locale })),
   );
   (globalThis as Record<string, unknown>).strapi = {
-    contentTypes: {
-      "api::spring.spring": { attributes: { name_search: {} } },
-    },
     db: { query: () => ({ findOne, findMany }) },
     plugin: () => ({
       service: () => ({
@@ -70,11 +67,20 @@ describe("Spring source_locale lifecycle invariant", () => {
 
   it("uses and canonicalizes the first manually created locale", async () => {
     installStrapi();
-    const data: Record<string, unknown> = { name: "Spring", locale: "en_us" };
+    const data: Record<string, unknown> = { name: "Spring", locale: "EN-us" };
 
     await lifecycles.beforeCreate({ params: { data } });
 
     expect(data.source_locale).toBe("en-US");
+  });
+
+  it("rejects a legacy underscore locale", async () => {
+    installStrapi();
+    const data: Record<string, unknown> = { name: "Spring", locale: "en_US" };
+
+    await expect(lifecycles.beforeCreate({ params: { data } })).rejects.toThrow(
+      "creation locale must be a valid locale code",
+    );
   });
 
   it("preserves the source when another localization row is created", async () => {
@@ -162,33 +168,24 @@ describe("Spring source_locale lifecycle invariant", () => {
     await expect(result).rejects.toMatchObject({ name: "ValidationError" });
   });
 
-  it("does not fail an unrelated update when a legacy row has a null source", async () => {
+  it("rejects updates when the persisted source locale is missing", async () => {
     installStrapi({ existingSources: [null] });
     const data: Record<string, unknown> = {
       description: "Updated description",
       source_locale: null,
     };
 
-    await lifecycles.beforeUpdate({ params: { data, where: { id: 1 } } });
-
-    expect(data).toEqual({ description: "Updated description" });
+    await expect(
+      lifecycles.beforeUpdate({ params: { data, where: { id: 1 } } }),
+    ).rejects.toThrow("repair the document before updating it");
   });
 
-  it("prevents a stale null sync from erasing an established source", async () => {
+  it("rejects a null source update", async () => {
     installStrapi({ existingSources: ["cs"] });
     const data: Record<string, unknown> = { source_locale: null };
 
-    await lifecycles.beforeUpdate({ params: { data, where: { id: 1 } } });
-
-    expect(data.source_locale).toBe("cs");
-  });
-
-  it("allows an explicit valid backfill when the legacy source is null", async () => {
-    installStrapi({ existingSources: [null] });
-    const data: Record<string, unknown> = { source_locale: "en_us" };
-
-    await lifecycles.beforeUpdate({ params: { data, where: { id: 1 } } });
-
-    expect(data.source_locale).toBe("en-US");
+    await expect(
+      lifecycles.beforeUpdate({ params: { data, where: { id: 1 } } }),
+    ).rejects.toThrow("source_locale must be a valid locale code");
   });
 });

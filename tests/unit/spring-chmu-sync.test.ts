@@ -53,9 +53,6 @@ function buildService(
     ),
   };
   const strapi = {
-    contentTypes: {
-      "api::spring.spring": { attributes: { name_search: {} } },
-    },
     documents: vi.fn((uid: string) =>
       uid === "api::spring.spring"
         ? { create, update, publish }
@@ -127,6 +124,7 @@ describe("spring.syncFromChmu localization", () => {
         lng: 16.6,
         external_source: "chmu",
         external_id: "CHMU-1",
+        source_locale: "cs",
       },
     });
     expect(stats).toMatchObject({
@@ -134,8 +132,6 @@ describe("spring.syncFromChmu localization", () => {
       default_locale: "en",
       sync_locale: "cs",
       created: 1,
-      localized_created: 1,
-      localized_updated: 0,
       skipped: 1,
       errors: 0,
     });
@@ -153,7 +149,6 @@ describe("spring.syncFromChmu localization", () => {
     expect(dbUpdateMany).not.toHaveBeenCalled();
     expect(stats).toMatchObject({
       created: 0,
-      localized_created: 0,
       errors: 1,
     });
     expect(log.error).toHaveBeenCalledWith(
@@ -184,6 +179,7 @@ describe("spring.syncFromChmu localization", () => {
       data: {
         name: "Žofínský pramen",
         name_search: "zofinsky pramen",
+        source_locale: "cs",
       },
     });
     expect(update.mock.calls[0][0].data).not.toHaveProperty("description");
@@ -198,17 +194,16 @@ describe("spring.syncFromChmu localization", () => {
         lng: 16.6,
         external_source: "chmu",
         external_id: "CHMU-1",
+        source_locale: "cs",
       },
     });
     const sharedData = dbUpdateMany.mock.calls[0][0].data;
     expect(sharedData).not.toHaveProperty("description");
-    expect(sharedData).not.toHaveProperty("source_locale");
+    expect(sharedData.source_locale).toBe("cs");
     expect(sharedData).not.toHaveProperty("publishedAt");
     expect(sharedData).not.toHaveProperty("current_status");
     expect(stats).toMatchObject({
       updated: 1,
-      localized_created: 0,
-      localized_updated: 1,
       errors: 0,
     });
     expect(Object.keys(stats)).toEqual(
@@ -219,8 +214,6 @@ describe("spring.syncFromChmu localization", () => {
         "sync_locale",
         "created",
         "updated",
-        "localized_created",
-        "localized_updated",
         "reports",
         "recent",
         "skipped",
